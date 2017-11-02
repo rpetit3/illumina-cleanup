@@ -1,2 +1,2 @@
-# fastq-cleanup
-A simple pipeline to cleanup FASTQ files. 
+# illumina-cleanup
+A simple pipeline to cleanup Illumina FASTQ files. 
