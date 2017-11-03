@@ -2,6 +2,8 @@ FROM rpetit3/nextconda-base
 
 MAINTAINER robbie.petit@gmail.com
 
+RUN apt-get -qq update && apt-get -qq -y install g++ gcc
+
 # SPAdes and BBmap
 RUN conda install -y spades==3.11.1 \
     && conda install -y bbmap==37.62 \
