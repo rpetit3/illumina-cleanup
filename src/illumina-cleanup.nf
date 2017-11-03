@@ -162,10 +162,10 @@ process merge_json {
         file spades from SPADES_JSON
         file cleanup from CLEANUP_JSON
     output:
-        file "illumina-cleanup.json"
+        file {"${sample}-illumina-cleanup.json"}
     shell:
         '''
-        merge-json.py !{original} !{adapter} !{spades} !{cleanup} > illumina-cleanup.json
+        merge-json.py !{original} !{adapter} !{spades} !{cleanup} > !{sample}-illumina-cleanup.json
         '''
 }
 
