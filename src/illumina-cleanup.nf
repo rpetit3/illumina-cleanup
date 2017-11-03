@@ -136,7 +136,7 @@ process final_stats {
         file "cleanup.json" into CLEANUP_JSON
     shell:
         '''
-        cat !{fq} | fastq-stats > cleanup.json !{genome_size}
+        zcat !{fq} | fastq-stats > cleanup.json !{genome_size}
         '''
 }
 
