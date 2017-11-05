@@ -299,7 +299,7 @@ if __name__ == '__main__':
                     args.min_read_length)
 
     # If large fastq reduce to random subset of 2.5x coverage cutoff
-    if stats['coverage'] > subsample * 2.5:
+    if stats['coverage'] > args.coverage * 2.5:
         fraction = (subsample * 2.5) / stats['total_bp']
         fq.read_large_fastq(sys.stdin, fraction)
         args.total_read_count = len(fq.fastq) / 4
