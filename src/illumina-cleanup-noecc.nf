@@ -75,45 +75,17 @@ process bbduk_fastq_stats {
     input:
         file fq from BBDUK_STATS
     output:
-        file "post-adapter.json" into ADAPTER_JSON
+        file "post-adapter.json" into BBDUK_FQ_STATS, ADAPTER_JSON
     shell:
         '''
         cat !{fq[0]} !{fq[1]} | fastq-stats > post-adapter.json !{genome_size}
         '''
 }
 
-process spades_error_correction {
-    publishDir logs_folder, mode: 'copy', overwrite: true, pattern: "*.log"
-
-    input:
-        file fq from BBDUK
-    output:
-        file 'corrected/*.fastq' into SPADES_FQ, SPADES_EC_STATS
-    shell:
-        '''
-        spades.py -1 !{fq[0]} -2 !{fq[1]} --only-error-correction --disable-gzip-output -t !{cpu} -o ./
-        cp .command.err error-correction-stderr.log
-        cp .command.out error-correction-stdout.log
-        '''
-}
-
-process spades_fastq_stats {
-    publishDir logs_folder, mode: 'copy', overwrite: true
-
-    input:
-        file fq from SPADES_EC_STATS
-    output:
-        file "post-ecc.json" into SPADES_FQ_STATS, SPADES_JSON
-    shell:
-        '''
-        cat !{fq[0]} !{fq[1]} | fastq-stats > post-ecc.json !{genome_size}
-        '''
-}
-
 process illumina_cleanup {
     input:
-        file fq from SPADES_FQ
-        file stats from SPADES_FQ_STATS
+        file fq from BBDUK
+        file stats from BBDUK_FQ_STATS
     output:
         file '*cleanup.fastq' into FASTQ_STATS, FASTQ_SPLIT
     shell:

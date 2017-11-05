@@ -17,6 +17,7 @@ RUN cd /tmp && \
     g++ -Wall -O3 -o /usr/local/bin/fastq-stats fastq-stats.cpp
 
 COPY src/illumina-cleanup.nf /usr/local/bin/illumina-cleanup.nf
+COPY src/illumina-cleanup-noecc.nf /usr/local/bin/illumina-cleanup-noecc.nf
 COPY src/illumina-cleanup.py /usr/local/bin/illumina-cleanup.py
 COPY src/merge-json.py /usr/local/bin/merge-json.py
 
