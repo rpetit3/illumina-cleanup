@@ -298,8 +298,13 @@ if __name__ == '__main__':
                     args.read_length_cutoff, args.min_mean_quality,
                     args.min_read_length)
 
-    # If large fastq reduce to random subset of 750x coverage
-    fq.fastq = [line.rstrip() for line in sys.stdin.readlines()]
+    # If large fastq reduce to random subset of 2.5x coverage cutoff
+    if stats['coverage'] > subsample * 2.5:
+        fraction = (subsample * 2.5) / stats['total_bp']
+        fq.read_large_fastq(sys.stdin, fraction)
+        args.total_read_count = len(fq.fastq) / 4
+    else:
+        fq.fastq = [line.rstrip() for line in sys.stdin.readlines()]
 
     fq.generate_order(args.total_read_count)
     fq.clean_up_fastq()
