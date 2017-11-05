@@ -38,6 +38,7 @@ class IlluminaQC(object):
 
     def read_large_fastq(self, file, fraction):
         """Reduce a large (2 GB+) file to a subset before cleanup."""
+        random.seed(123456)
         while 1:
             head = file.readline().rstrip()
             if not head:
@@ -47,7 +48,6 @@ class IlluminaQC(object):
             plus = file.readline().rstrip()
             qual = file.readline().rstrip()
 
-            random.seed(123456)
             if random.random() <= fraction:
                 self.fastq.append(head)
                 self.fastq.append(seq)
@@ -299,8 +299,8 @@ if __name__ == '__main__':
                     args.min_read_length)
 
     # If large fastq reduce to random subset of 2.5x coverage cutoff
-    if stats['coverage'] > args.coverage * 2.5:
-        fraction = (subsample * 2.5) / stats['total_bp']
+    if stats['coverage'] > 750:
+        fraction = (args.genome_size * 750) / stats['total_bp']
         fq.read_large_fastq(sys.stdin, fraction)
         args.total_read_count = len(fq.fastq) / 4
     else:

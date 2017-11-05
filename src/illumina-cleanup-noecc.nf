@@ -123,7 +123,7 @@ process merge_json {
         file {"${sample}-illumina-cleanup.json"}
     shell:
         '''
-        merge-json.py !{original} !{adapter} !{spades} !{cleanup} > !{sample}-illumina-cleanup.json
+        merge-json.py !{original} !{adapter} !{cleanup} > !{sample}-illumina-cleanup.json
         '''
 }
 
