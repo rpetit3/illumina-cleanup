@@ -111,17 +111,19 @@ process spades_fastq_stats {
 }
 
 process illumina_cleanup {
+    publishDir outdir, mode: 'copy', overwrite: true
+
     input:
         file fq from SPADES_FQ
         file stats from SPADES_FQ_STATS
     output:
-        file '*cleanup.fastq' into FASTQ_STATS, FASTQ_SPLIT
+        file {"${sample}.cleanup.fastq.gz"} into FASTQ_STATS
     shell:
         no_length_filter = is_miseq ? '--no_length_filter' : ''
         '''
         fastq-interleave !{fq[0]} !{fq[1]} | illumina-cleanup.py --paired --stats !{stats} \
-        --coverage !{params.coverage} --genome_size !{genome_size} !{no_length_filter} > \
-        !{sample}.cleanup.fastq
+        --coverage !{params.coverage} --genome_size !{genome_size} !{no_length_filter} | \
+        gzip --best - > !{sample}.cleanup.fastq.gz
         '''
 }
 
@@ -134,22 +136,7 @@ process final_stats {
         file "cleanup.json" into CLEANUP_JSON
     shell:
         '''
-        cat !{fq} | fastq-stats > cleanup.json !{genome_size}
-        '''
-}
-
-process split_fastq {
-    publishDir outdir, mode: 'copy', overwrite: true
-
-    input:
-        file fq from FASTQ_STATS
-    output:
-        file "*.fastq.gz"
-    shell:
-        '''
-        reformat.sh in=!{fq} out1=!{sample}-R1.cleanup.fastq out2=!{sample}-R2.cleanup.fastq
-        gzip --best !{sample}-R1.cleanup.fastq
-        gzip --best !{sample}-R2.cleanup.fastq
+        zcat !{fq} | fastq-stats > cleanup.json !{genome_size}
         '''
 }
 
@@ -205,7 +192,7 @@ def print_usage() {
     log.info '    --outdir  DIR      Directory to write results to. (Default ./${NAME})'
     log.info '    --genome_size  INT Expected genome size (bp) for coverage estimation.'
     log.info '    --coverage  INT    Reduce samples to a given coverage. (Default: 100x)'
-    log.info '    --miseq            For Illumina MiSeq (variable read lengths), reads '
+    log.info '    --is_miseq            For Illumina MiSeq (variable read lengths), reads '
     log.info '                           will not be filtered base on read lengths.'
     log.info '    --help          Show this message and exit'
     log.info ''
