@@ -118,7 +118,6 @@ process merge_json {
     input:
         file original from ORIGINAL_JSON
         file adapter from ADAPTER_JSON
-        file spades from SPADES_JSON
         file cleanup from CLEANUP_JSON
     output:
         file {"${sample}-illumina-cleanup.json"}
