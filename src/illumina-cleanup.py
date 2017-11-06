@@ -40,25 +40,35 @@ class IlluminaQC(object):
         """Reduce a large (2 GB+) file to a subset before cleanup."""
         random.seed(123456)
         while 1:
-            head = file.readline().rstrip()
-            if not head:
+            head1 = file.readline().rstrip()
+            if not head1:
                 break
 
-            seq = file.readline().rstrip()
-            plus = file.readline().rstrip()
-            qual = file.readline().rstrip()
+            seq1 = file.readline().rstrip()
+            plus1 = file.readline().rstrip()
+            qual1 = file.readline().rstrip()
+
+            head2 = None
+            seq2 = None
+            plus2 = None
+            qual2 = None
+            if self.is_paired:
+                head2 = file.readline().rstrip()
+                seq2 = file.readline().rstrip()
+                plus2 = file.readline().rstrip()
+                qual2 = file.readline().rstrip()
 
             if random.random() <= fraction:
-                self.fastq.append(head)
-                self.fastq.append(seq)
-                self.fastq.append(plus)
-                self.fastq.append(qual)
+                self.fastq.append(head1)
+                self.fastq.append(seq1)
+                self.fastq.append(plus1)
+                self.fastq.append(qual1)
 
                 if self.is_paired:
-                    self.fastq.append(file.readline().rstrip())
-                    self.fastq.append(file.readline().rstrip())
-                    self.fastq.append(file.readline().rstrip())
-                    self.fastq.append(file.readline().rstrip())
+                    self.fastq.append(head2)
+                    self.fastq.append(seq2)
+                    self.fastq.append(plus2)
+                    self.fastq.append(qual2)
 
     def __mean_quality(self, qual):
         """Create a count of the quality score."""
@@ -299,8 +309,8 @@ if __name__ == '__main__':
                     args.min_read_length)
 
     # If large fastq reduce to random subset of 2.5x coverage cutoff
-    if stats['coverage'] > 750:
-        fraction = (args.genome_size * 750) / stats['total_bp']
+    if stats['coverage'] > 750.0:
+        fraction = (args.genome_size * 750.0) / stats['total_bp']
         fq.read_large_fastq(sys.stdin, fraction)
         args.total_read_count = len(fq.fastq) / 4
     else:
