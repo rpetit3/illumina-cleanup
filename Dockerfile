@@ -2,28 +2,29 @@ FROM rpetit3/nextconda-base
 
 MAINTAINER robbie.petit@gmail.com
 
-RUN apt-get -qq update && apt-get -qq -y install g++ gcc
-
-# SPAdes and BBmap
-RUN conda install -y spades==3.11.1 \
+RUN apt-get -qq update \
+    && apt-get -qq -y --no-install-recommends install g++ gcc zlib1g-dev \
+    && conda install -y spades==3.11.1 \
     && conda install -y bbmap==37.62 \
-    && pip install numpy
+    && pip install numpy \
+    && conda clean --all --yes \
+    && apt-get -qq -y autoremove \
+    && apt-get autoclean \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /var/log/dpkg.log /tmp/* /var/tmp/*
 
 # FASTQ tools
-COPY src/fastq-interleave.cpp /tmp/fastq-interleave.cpp
-COPY src/fastq-stats.cpp /tmp/fastq-stats.cpp
-RUN cd /tmp && \
-    g++ -Wall -O3 -o /usr/local/bin/fastq-interleave fastq-interleave.cpp && \
-    g++ -Wall -O3 -o /usr/local/bin/fastq-stats fastq-stats.cpp
+COPY src /tmp/src
+RUN cd /tmp/src \
+    && g++ -Wall -O3 -o /usr/local/bin/fastq-interleave fastq-interleave.cpp \
+    && g++ -Wall -O3 -o /usr/local/bin/fastq-stats fastq-stats.cpp \
+    && rm *.cpp \
+    && chmod 755 ./* \
+    && mv ./* /usr/local/bin \
+    && mkdir -p /opt/references/ /data \
+    && rm -rf /tmp/*
 
-COPY src/illumina-cleanup.nf /usr/local/bin/illumina-cleanup.nf
-COPY src/illumina-cleanup-noecc.nf /usr/local/bin/illumina-cleanup-noecc.nf
-COPY src/illumina-cleanup.py /usr/local/bin/illumina-cleanup.py
-COPY src/merge-json.py /usr/local/bin/merge-json.py
-
-RUN mkdir -p /opt/references/ /data
-COPY data/phiX-NC_001422.fasta /opt/references/phiX-NC_001422.fasta
-COPY data/adapters.fasta /opt/references/adapters.fasta
+COPY data /opt/references
 
 WORKDIR /data
 

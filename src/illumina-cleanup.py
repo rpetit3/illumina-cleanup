@@ -296,10 +296,12 @@ if __name__ == '__main__':
         args.total_read_count = stats['read_total']
         args.min_read_length = stats['read_min']
 
-        if not args.no_length_filter:
-            suggested_min = define_min_read(stats, args.coverage, args.paired)
-            if suggested_min <= stats['read_max']:
-                args.min_read_length = suggested_min
+        # Don't apply filter to old Illumina runs (<90bp)
+        if not args.no_length_filter and stats['read_mean'] >= 90:
+                suggested_min = define_min_read(stats, args.coverage,
+                                                args.paired)
+                if suggested_min <= stats['read_max']:
+                    args.min_read_length = suggested_min
 
     subsample = args.coverage * args.genome_size if args.coverage else False
 
