@@ -82,11 +82,12 @@ class IlluminaQC(object):
         quals = []
         new_qual = []
         for index, base in enumerate(seq):
-            if base == 'N' and len(new_seq):
-                seqs.append(''.join(new_seq))
-                quals.append(''.join(new_qual))
-                new_seq = []
-                new_qual = []
+            if base == 'N':
+                if len(new_seq):
+                    seqs.append(''.join(new_seq))
+                    quals.append(''.join(new_qual))
+                    new_seq = []
+                    new_qual = []
             else:
                 new_seq.append(base)
                 new_qual.append(qual[index])
@@ -168,8 +169,8 @@ class IlluminaQC(object):
     def generate_order(self, total_read_count):
         """Generate a random (seeded) order of reads to be selected."""
         if self.is_paired and total_read_count % 2 == 0:
-            total_read_count = total_read_count / 2
-        self.__read_order = list(range(int(total_read_count)))
+            total_read_count = total_read_count // 2
+        self.__read_order = list(range(total_read_count))
         if self.subsample:
             random.seed(123456)
             random.shuffle(self.__read_order)
@@ -218,7 +219,7 @@ def define_min_read(stats, cutoff, paired):
     """Determine minimum read length to filter reads on."""
     # Make it a little more relaxed for paired reads
     x = 2 if paired else 1
-    if cutoff * 3 * x:
+    if stats['coverage'] >= cutoff * 3 * x:
         return int(stats['read_median'])
     elif stats['coverage'] >= (cutoff * 2 * x):
         return int(stats['read_25th'])
@@ -293,31 +294,28 @@ if __name__ == '__main__':
         args.min_mean_quality = define_min_quality(
             stats, args.coverage, args.paired
         )
-        args.total_read_count = stats['read_total']
-        args.min_read_length = stats['read_min']
-
         # Don't apply filter to old Illumina runs (<90bp)
         if not args.no_length_filter and stats['read_mean'] >= 90:
-                suggested_min = define_min_read(stats, args.coverage,
-                                                args.paired)
-                if suggested_min <= stats['read_max']:
-                    args.min_read_length = suggested_min
+            suggested_min = define_min_read(stats, args.coverage, args.paired)
+            if suggested_min <= stats['read_max']:
+                args.min_read_length = suggested_min
 
     subsample = args.coverage * args.genome_size if args.coverage else False
-
     # Process FASTQ
-    fq = IlluminaQC(subsample, args.paired,
-                    args.read_length_cutoff, args.min_mean_quality,
-                    args.min_read_length)
+    fq = IlluminaQC(subsample, args.paired, args.read_length_cutoff,
+                    args.min_mean_quality, args.min_read_length)
 
     # If large fastq reduce to random subset of 5x coverage cutoff
     cutoff = args.coverage * 5.0
-    if stats['coverage'] > cutoff:
-        fraction = (args.genome_size * cutoff) / stats['total_bp']
-        fq.read_large_fastq(sys.stdin, fraction)
-        args.total_read_count = len(fq.fastq) / 4
+    if stats:
+        if stats['coverage'] > cutoff:
+            fraction = (args.genome_size * cutoff) / stats['total_bp']
+            fq.read_large_fastq(sys.stdin, fraction)
+        else:
+            fq.fastq = [line.rstrip() for line in sys.stdin.readlines()]
     else:
         fq.fastq = [line.rstrip() for line in sys.stdin.readlines()]
 
+    args.total_read_count = len(fq.fastq) // 4
     fq.generate_order(args.total_read_count)
     fq.clean_up_fastq()
