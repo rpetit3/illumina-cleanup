@@ -4,20 +4,21 @@ VERSION = 0.4
 params.help = null
 params.version = null
 params.example_fastqs = null
+params.check_fastqs = null
 params.cpus = 1
 params.fastqs = null
 params.outdir = null
 params.single_end = null
 params.genome_size = null
 params.coverage = '100'
-params.adapters = 'adapters'
+params.adapters = null
 params.ktrim = 'r'
 params.adapter_k = 23
 params.mink = 11
 params.hdist = 1
 params.tpe = 't'
 params.tbo = 't'
-params.phix = 'phix'
+params.phix = null
 params.phix_k = 31
 params.qtrim = 'rl'
 params.trimq = 6
@@ -38,6 +39,7 @@ if (params.version) print_version();
 if (params.help) print_usage();
 check_input_params()
 check_input_fastqs(params.fastqs)
+if (params.check_fastqs) print_check_fastqs(params.fastqs);
 
 // Setup output directories
 outdir = params.outdir ? params.outdir : './'
@@ -61,10 +63,11 @@ process estimate_genome_size {
     if (params.genome_size)
         """
         echo !{params.genome_size}
+        echo "--genome_size !{params.genome_size} given at runtime... Skipping mash" 1> mash-sketch-original.log
         """
     else
         """
-        mash sketch -o temp -s 10000 -k 31 -m 3 -r !{fq[0]} 2>&1 1> mash-sketch-original.log
+        mash sketch -o temp -s 10000 -k 31 -m 3 -r !{fq[0]} 2>&1 | tee mash-sketch-original.log
         mash info -t temp.msh | tail -n 1 | cut -f2,2
         """
 }
@@ -95,7 +98,7 @@ process original_summary {
     fq2 = single_end ? '' : fq[1]
     """
     zcat !{fq[0]} !{fq2} > !{sample}-original
-    cat !{sample}-original | fastq-scan !{genome_size} > fastq-scan-original.json
+    cat !{sample}-original | fastq-scan -g !{genome_size} > fastq-scan-original.json
     fastqc --noextract -f fastq -t !{params.cpus} !{sample}-original
     """
 }
@@ -114,13 +117,14 @@ process adapter_removal {
     file '*.log'
 
     shell:
+    adapters = params.adapters ? file(params.adapters) : 'adapters'
     in2 = single_end ? '' : 'in2=' + fq[1]
     out2 = single_end ? '' : 'out2=adapter-r2.fq'
     """
     bbduk.sh \
         in=!{fq[0]} !{in2} \
         out=adapter-r1.fq !{out2} \
-        ref=!{params.adapters} \
+        ref=!{adapters} \
         k=!{params.adapter_k} \
         ktrim=!{params.ktrim} \
         mink=!{params.mink} \
@@ -130,7 +134,7 @@ process adapter_removal {
         threads=!{params.cpus} \
         ftm=!{params.ftm} \
         ordered=t \
-        stats=bbduk-adapter.log
+        stats=bbduk-adapter.log 2>&1 | tee bbduk-adapter-stdout.log
     """
 }
 
@@ -148,13 +152,14 @@ process phix_removal {
     file '*.log'
 
     shell:
+    phix = params.phix ? file(params.phix) : 'phix'
     in2 = single_end ? '' : 'in2=' + fq[1]
     out2 = single_end ? '' : 'out2=phix-r2.fq'
     """
     bbduk.sh \
         in=!{fq[0]} !{in2} \
         out=phix-r1.fq !{out2} \
-        ref=!{params.phix} \
+        ref=!{phix} \
         k=!{params.phix_k} \
         hdist=!{params.hdist} \
         tpe=!{params.tpe} \
@@ -167,7 +172,7 @@ process phix_removal {
         tossjunk=!{params.tossjunk} \
         threads=!{params.cpus} \
         ordered=t \
-        stats=bbduk-phix.log
+        stats=bbduk-phix.log 2>&1 | tee bbduk-phix-stdout.log
     """
 }
 
@@ -189,7 +194,7 @@ process error_correction {
     fq2 = single_end ? '' : '-r ' + fq[1]
     """
     lighter -od . -r !{fq[0]} !{fq2} -K 31 !{genome_size} -maxcor 1 \
-            -t !{params.cpus} 2>&1 > lighter-ecc.log
+            -t !{params.cpus} 2>&1 | tee lighter-ecc.log
     """
 }
 
@@ -197,6 +202,7 @@ process reduce_coverage {
     /* Reduce the sequence coverage using BBDuk (reformat) */
     cpus 1
     tag "${sample}"
+    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from REDUCE_COVERAGE
@@ -215,7 +221,7 @@ process reduce_coverage {
         in=!{fq[0]} !{in2} \
         out=subsample-r1.fq !{out2} \
         samplebasestarget=!{total_bp} \
-        overwrite=t 2>&1 > reformat.log
+        overwrite=t 2>&1 | tee reformat.log
     """
 }
 
@@ -238,7 +244,7 @@ process final_summary {
     fq2 = single_end ? '' : fq[1]
     """
     cat !{fq[0]} !{fq2} > !{sample}-final
-    cat !{sample}-final | fastq-scan !{genome_size} > fastq-scan-final.json
+    cat !{sample}-final | fastq-scan -g !{genome_size} > fastq-scan-final.json
     fastqc --noextract -f fastq -t !{params.cpus} !{sample}-final
     """
 }
@@ -248,18 +254,20 @@ process mash_sketch {
     cpus 1
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc", mode: 'rellink', overwrite: true, pattern: "*.msh"
+    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from MASH_SKETCH
 
     output:
     file '*.msh'
+    file 'mash-sketch-final.log'
 
     shell:
     fq2 = single_end ? '' : fq[1]
     """
     cat !{fq[0]} !{fq2} | \
-    mash sketch -o !{sample} -s !{params.mash_s} -k !{params.mash_k} -m !{params.mash_m} -r -
+    mash sketch -o !{sample} -s !{params.mash_s} -k !{params.mash_k} -m !{params.mash_m} -r - 2>&1 | tee mash-sketch-final.log
     """
 }
 
@@ -447,6 +455,16 @@ def print_example_fastqs() {
     exit 0
 }
 
+def print_check_fastqs(fastq_input) {
+    log.info 'Printing what would have been processed. Each line consists of an array of'
+    log.info 'three elements: [SAMPLE_NAME, IS_SINGLE_END, [FASTQ_1, FASTQ_2]]'
+    log.info ''
+    log.info 'Found:'
+    create_fastq_channel(fastq_input).println()
+
+    exit 0
+}
+
 def check_input_params() {
     error = false
     missing_requirement = false
@@ -456,6 +474,19 @@ def check_input_params() {
     } else if (!file(params.fastqs).exists()) {
         log.info('Invalid input (--fastqs), please verify "' + params.fastqs + '"" exists.')
         error = true
+    }
+
+    if (params.adapters) {
+        if (!file(params.adapters).exists()) {
+            log.info('Invalid input (--adapters), please verify "' + params.adapters + '"" exists.')
+            error = true
+        }
+    }
+    if (params.phix) {
+        if (!file(params.phix).exists()) {
+            log.info('Invalid input (--phix), please verify "' + params.phix + '"" exists.')
+            error = true
+        }
     }
 
     if (error) {
