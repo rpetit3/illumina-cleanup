@@ -31,6 +31,7 @@ params.maxcor = 1
 params.mash_s = 10000
 params.mash_k = 31
 params.mash_m = 3
+descriptions = get_process_descriptions()
 
 // Parse input parameters
 if (workflow.commandLine.endsWith(workflow.scriptName)) print_usage();
@@ -40,6 +41,7 @@ if (params.help) print_usage();
 check_input_params()
 check_input_fastqs(params.fastqs)
 if (params.check_fastqs) print_check_fastqs(params.fastqs);
+descriptions = get_process_descriptions()
 
 // Setup output directories
 outdir = params.outdir ? params.outdir : './'
@@ -48,6 +50,7 @@ summary_folder = outdir + '/summary'
 
 process estimate_genome_size {
     /* Estimate a genome size if one is not given at runtime. */
+    beforeScript "echo '" + descriptions.estimate_genome_size + "' > estimate_genome_size"
     tag "${sample}"
     cpus 1
     publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
@@ -58,6 +61,7 @@ process estimate_genome_size {
     output:
     file 'mash-sketch-original.log'
     stdout into MASH_OUTPUT
+    file 'estimate_genome_size'  into ESTIMATE_GENOME_SIZE_COMMAND
 
     shell:
     if (params.genome_size)
@@ -81,6 +85,7 @@ MASH_OUTPUT
 
 process original_summary {
     /* Run FASTQC on the input FASTQ files. */
+    beforeScript "echo '" + descriptions.original_summary + "' > original_summary"
     cpus params.cpus
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc/summary", mode: 'rellink', overwrite: true, pattern: '*.{html,json,zip}'
@@ -93,10 +98,12 @@ process original_summary {
     file '*.json'
     file '*fastqc.html'
     file '*fastqc.zip'
+    file 'original_summary' into ORIGINAL_SUMMARY_COMMAND
 
     shell:
     fq2 = single_end ? '' : fq[1]
     """
+    pwd | tee pwd.txt
     zcat !{fq[0]} !{fq2} > !{sample}-original
     cat !{sample}-original | fastq-scan -g !{genome_size} > fastq-scan-original.json
     fastqc --noextract -f fastq -t !{params.cpus} !{sample}-original
@@ -105,6 +112,7 @@ process original_summary {
 
 process adapter_removal {
     /* Remove Illumina related adapters using BBDuk */
+    beforeScript "echo '" + descriptions.adapter_removal + "' > adapter_removal"
     cpus params.cpus
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
@@ -113,8 +121,9 @@ process adapter_removal {
     set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
 
     output:
-    set val(sample), val(single_end), file('adapter-r*.fq') into PHIX_REMOVAL
     file '*.log'
+    set val(sample), val(single_end), file('adapter-r*.fq') into PHIX_REMOVAL
+    file 'adapter_removal' into ADAPTER_REMOVAL_COMMAND
 
     shell:
     adapters = params.adapters ? file(params.adapters) : 'adapters'
@@ -140,6 +149,7 @@ process adapter_removal {
 
 process phix_removal {
     /* Remove contaminant (phiX) and quality-trim using BBDuk */
+    beforeScript "echo '" + descriptions.phix_removal + "' > phix_removal"
     cpus params.cpus
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
@@ -148,8 +158,9 @@ process phix_removal {
     set val(sample), val(single_end), file(fq) from PHIX_REMOVAL
 
     output:
-    set val(sample), val(single_end), file('phix-r*.fq') into ERROR_CORRECTION
     file '*.log'
+    set val(sample), val(single_end), file('phix-r*.fq') into ERROR_CORRECTION
+    file 'phix_removal' into PHIX_REMOVAL_COMMAND
 
     shell:
     phix = params.phix ? file(params.phix) : 'phix'
@@ -178,6 +189,7 @@ process phix_removal {
 
 process error_correction {
     /* Attempt to correct any base-call errors using Lighter */
+    beforeScript "echo '" + descriptions.error_correction + "' > error_correction"
     cpus params.cpus
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
@@ -189,17 +201,19 @@ process error_correction {
     output:
     set val(sample), val(single_end), file('phix-r*.cor.fq') into REDUCE_COVERAGE
     file '*.log'
+    file 'error_correction' into ERROR_CORRECTION_COMMAND
 
     shell:
     fq2 = single_end ? '' : '-r ' + fq[1]
     """
     lighter -od . -r !{fq[0]} !{fq2} -K 31 !{genome_size} -maxcor 1 \
-            -t !{params.cpus} 2>&1 | tee lighter-ecc.log
+        -t !{params.cpus} 2>&1 | tee lighter-ecc.log
     """
 }
 
 process reduce_coverage {
     /* Reduce the sequence coverage using BBDuk (reformat) */
+    beforeScript "echo '" + descriptions.reduce_coverage + "' > reduce_coverage"
     cpus 1
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
@@ -211,6 +225,7 @@ process reduce_coverage {
     output:
     set val(sample), val(single_end), file('subsample-r*.fq') into FINAL_SUMMARY, MASH_SKETCH, FINISH_UP
     file '*.log'
+    file 'reduce_coverage' into REDUCE_COVERAGE_COMMAND
 
     shell:
     total_bp = params.coverage.toInteger() * genome_size.toInteger()
@@ -225,8 +240,33 @@ process reduce_coverage {
     """
 }
 
+process mash_sketch {
+    /* Create a Mash Sketch of the processed FASTQ. */
+    beforeScript "echo '" + descriptions.mash_sketch + "' > mash_sketch"
+    cpus 1
+    tag "${sample}"
+    publishDir "${outdir}/${sample}/sequence-qc", mode: 'rellink', overwrite: true, pattern: "*.msh"
+    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
+
+    input:
+    set val(sample), val(single_end), file(fq) from MASH_SKETCH
+
+    output:
+    file '*.msh'
+    file 'mash-sketch-final.log'
+    file 'mash_sketch' into MASH_SKETCH_COMMAND
+
+    shell:
+    fq2 = single_end ? '' : fq[1]
+    """
+    cat !{fq[0]} !{fq2} | \
+    mash sketch -o !{sample} -s !{params.mash_s} -k !{params.mash_k} -m !{params.mash_m} -r - 2>&1 | tee mash-sketch-final.log
+    """
+}
+
 process final_summary {
     /* Run FASTQC on the processed FASTQ files. */
+    beforeScript "echo '" + descriptions.final_summary + "' > final_summary"
     cpus params.cpus
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc/summary", mode: 'rellink', overwrite: true, pattern: '*.{html,json,zip}'
@@ -239,6 +279,7 @@ process final_summary {
     file '*.json'
     file '*fastqc.html'
     file '*fastqc.zip'
+    file 'final_summary' into FINAL_SUMMARY_COMMAND
 
     shell:
     fq2 = single_end ? '' : fq[1]
@@ -249,30 +290,9 @@ process final_summary {
     """
 }
 
-process mash_sketch {
-    /* Create a Mash Sketch of the processed FASTQ. */
-    cpus 1
-    tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc", mode: 'rellink', overwrite: true, pattern: "*.msh"
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
-
-    input:
-    set val(sample), val(single_end), file(fq) from MASH_SKETCH
-
-    output:
-    file '*.msh'
-    file 'mash-sketch-final.log'
-
-    shell:
-    fq2 = single_end ? '' : fq[1]
-    """
-    cat !{fq[0]} !{fq2} | \
-    mash sketch -o !{sample} -s !{params.mash_s} -k !{params.mash_k} -m !{params.mash_m} -r - 2>&1 | tee mash-sketch-final.log
-    """
-}
-
 process finish_up {
     /* Compress the processed FASTQ files. */
+    beforeScript "echo '" + descriptions.finish_up + "' > finish_up"
     cpus 1
     tag "${sample}"
     publishDir "${outdir}/${sample}/sequence-qc", mode: 'rellink', overwrite: true, pattern: '*.fastq.gz'
@@ -283,6 +303,7 @@ process finish_up {
 
     output:
     file '*.fastq.gz'
+    file 'finish_up*' into FINISH_UP_COMMAND
 
     shell:
     if (single_end)
@@ -294,6 +315,38 @@ process finish_up {
         gzip --best -c -n !{fq[0]} > !{sample}_R1.fastq.gz
         gzip --best -c -n !{fq[1]} > !{sample}_R2.fastq.gz
         """
+}
+
+// Merge all the .commands into a single channel
+process jsonify_commands {
+    /* Aggregate all .command files into a single json file. */
+
+    input:
+    file estimate_genome_size from ESTIMATE_GENOME_SIZE_COMMAND
+    file original_summary from ORIGINAL_SUMMARY_COMMAND
+    file adapter_removal from ADAPTER_REMOVAL_COMMAND
+    file phix_removal from PHIX_REMOVAL_COMMAND
+    file error_correction from ERROR_CORRECTION_COMMAND
+    file reduce_coverage from REDUCE_COVERAGE_COMMAND
+    file mash_sketch from MASH_SKETCH_COMMAND
+    file final_summary from FINAL_SUMMARY_COMMAND
+    file finish_up from FINISH_UP_COMMAND
+
+    output:
+    file 'work-summary.json' into WORK_SUMMARY
+
+    shell:
+    """
+    ls | grep -v ".txt" > processes.txt
+
+    bbduk.sh --version 2>&1 | grep "BBMap version" | sed 's/version //' > versions.txt
+    fastqc --version >> versions.txt
+    fastq-scan -v >> versions.txt
+    lighter -v >> versions.txt
+    echo mash `mash --version` >> versions.txt
+
+    jsonify-nextflow-process.py processes.txt versions.txt > work-summary.json
+    """
 }
 
 /* ==== END FASTQ CLEANUP ==== */
@@ -551,4 +604,55 @@ def check_input_fastqs(fastq_input) {
         log.info 'Exiting'
         exit 1
     }
+}
+
+def get_process_descriptions() {
+    def descriptions = [:]
+    descriptions['estimate_genome_size'] = (
+        "If a genome size is not given, `mash` is used to estimate the " +
+        "genome size of the input sequences. The genome size is neccessary " +
+        "for estimating genome coverage and reducing to a set coverage."
+    )
+    descriptions['original_summary'] = (
+        "`FastQC` and `fastq-scan` are used to determine sequencing metrics " +
+        "corresponding to original raw sequences before any processing has " +
+        "occured."
+    )
+    descriptions['adapter_removal'] = (
+        "Illumina adapters that may be present in the raw sequences are " +
+        "trimmed away with `BBDuk`."
+    )
+    descriptions['phix_removal'] = (
+        "Any reads contaminated with phiX 174 sequences are removed using " +
+        "`BBDuk`. Reads also under go quality control by making sure each " +
+        "read meets quality and length thresholds set by the user."
+    )
+    descriptions['error_correction'] = (
+        "`Lighter` is used to correct any sequencing errors that might be " +
+        "present in the reads."
+    )
+    descriptions['reduce_coverage'] = (
+        "Using the estimated genome size, the processed reads are randomly " +
+        "subsampled to a given genome coverage by `reformat.sh` (from BBMap)."
+    )
+    descriptions['mash_sketch'] = (
+        "A minmer sketch representing the final set of cleaned up reads is " +
+        "created using `mash`."
+    )
+    descriptions['final_summary'] = (
+        "`FastQC` and `fastq-scan` are used to determine sequencing metrics " +
+        "corresponding to sequences after the clean up process has completed."
+    )
+    descriptions['finish_up'] = (
+        "After clean up has completed the final FASTQ file(s) are " +
+        "compressed using Gzip."
+    )
+    return descriptions
+}
+
+def summarize_run(process_json, versions) {
+    /* Summarize results from this workflow run into Markdown/PDF format. */
+    summary = [:]
+
+
 }
