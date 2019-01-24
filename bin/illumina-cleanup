@@ -31,6 +31,7 @@ params.ftm = 5
 params.xmx = '8g'
 params.maxcor = 1
 params.sampleseed = 42
+params.keep_cache = false
 
 // Parse input parameters
 if (workflow.commandLine.endsWith(workflow.scriptName)) print_usage();
@@ -56,7 +57,7 @@ process original_summary {
     /* Run FASTQC on the input FASTQ files. */
     cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
+    publishDir "${outdir}/${sample}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
 
     input:
     set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
@@ -80,7 +81,7 @@ process adapter_removal {
     /* Remove Illumina related adapters using BBDuk */
     cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
+    publishDir "${outdir}/${sample}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
@@ -115,7 +116,7 @@ process phix_removal {
     /* Remove contaminant (phiX) and quality-trim using BBDuk */
     cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
+    publishDir "${outdir}/${sample}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from PHIX_REMOVAL
@@ -216,7 +217,7 @@ process final_summary {
     /* Run FASTQC on the processed FASTQ files. */
     cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
+    publishDir "${outdir}/${sample}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
 
     input:
     set val(sample), val(single_end), file(fq) from FINAL_SUMMARY
@@ -239,7 +240,7 @@ process finish_up {
     /* Compress the processed FASTQ files. */
     cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/${PROGRAM_NAME}", mode: 'copy', overwrite: true, pattern: '*.fastq.gz'
+    publishDir "${outdir}/${sample}", mode: 'copy', overwrite: true, pattern: '*.fastq.gz'
 
     input:
     set val(sample), val(single_end), file(fq) from FINISH_UP
@@ -259,6 +260,12 @@ process finish_up {
 
 /* ==== END FASTQ CLEANUP ==== */
 workflow.onComplete {
+    if (workflow.success == true && params.keep_cache == false) {
+        // No need to resume completed run so remove cache.
+        file('./work/').deleteDir()
+        file('./.nextflow/').deleteDir()
+        file('.nextflow.log').delete()
+    }
     println """
     Pipeline execution summary
     ---------------------------
@@ -392,6 +399,8 @@ def print_usage() {
             --sampleseed INT    Set to a positive number to use that prng seed for
                                     sampling (Default 42).
 
+            --keep_cache        Keeps 'work' and '.nextflow' logs, default is to
+                                    delete on successful completion.
             --version           Print workflow version information
             --help              Show this message and exit
     """.stripIndent()
