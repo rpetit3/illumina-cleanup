@@ -1,5 +1,6 @@
 #!/usr/bin/env nextflow
-NAME = 'illumina-cleanup'
+import groovy.json.JsonOutput
+PROGRAM_NAME = 'illumina-cleanup'
 VERSION = 0.4
 params.help = null
 params.version = null
@@ -9,7 +10,7 @@ params.cpus = 1
 params.fastqs = null
 params.outdir = null
 params.single_end = null
-params.genome_size = null
+params.genome_size = 0
 params.coverage = '100'
 params.adapters = null
 params.ktrim = 'r'
@@ -27,11 +28,9 @@ params.maq = 20
 params.qout = 33
 params.tossjunk = 't'
 params.ftm = 5
+params.xmx = '8g'
 params.maxcor = 1
-params.mash_s = 10000
-params.mash_k = 31
-params.mash_m = 3
-descriptions = get_process_descriptions()
+params.sampleseed = 42
 
 // Parse input parameters
 if (workflow.commandLine.endsWith(workflow.scriptName)) print_usage();
@@ -41,81 +40,47 @@ if (params.help) print_usage();
 check_input_params()
 check_input_fastqs(params.fastqs)
 if (params.check_fastqs) print_check_fastqs(params.fastqs);
-descriptions = get_process_descriptions()
+
+// Set the maximum number of cpus to use
+config.poolSize = params.max_cpus.toInteger()
+cpus = params.cpus
+if (cpus > params.max_cpus) {
+    cpus = params.max_cpus
+    log.info "--cpus ${params.cpus} exceeded --max_cpus ${params.max_cpus}, changed ${params.cpus} to ${cpus}"
+}
 
 // Setup output directories
 outdir = params.outdir ? params.outdir : './'
-log_folder = outdir + '/logs'
-summary_folder = outdir + '/summary'
-
-process estimate_genome_size {
-    /* Estimate a genome size if one is not given at runtime. */
-    beforeScript "echo '" + descriptions.estimate_genome_size + "' > estimate_genome_size"
-    tag "${sample}"
-    cpus 1
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
-
-    input:
-    set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
-
-    output:
-    file 'mash-sketch-original.log'
-    stdout into MASH_OUTPUT
-    file 'estimate_genome_size'  into ESTIMATE_GENOME_SIZE_COMMAND
-
-    shell:
-    if (params.genome_size)
-        """
-        echo !{params.genome_size}
-        echo "--genome_size !{params.genome_size} given at runtime... Skipping mash" 1> mash-sketch-original.log
-        """
-    else
-        """
-        mash sketch -o temp -s 10000 -k 31 -m 3 -r !{fq[0]} 2>&1 | tee mash-sketch-original.log
-        mash info -t temp.msh | tail -n 1 | cut -f2,2
-        """
-}
-
-// Pull out genome size from Mash output
-MASH_OUTPUT
-    .flatMap{ it.tokenize('\n') }
-    .last()
-    .into { GS_ORIGINAL_SUMMARY; GS_ERROR_CORRECTION; GS_REDUCE_COVERAGE; GS_FINAL_SUMMARY }
-
 
 process original_summary {
     /* Run FASTQC on the input FASTQ files. */
-    beforeScript "echo '" + descriptions.original_summary + "' > original_summary"
-    cpus params.cpus
+    cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc/summary", mode: 'rellink', overwrite: true, pattern: '*.{html,json,zip}'
+    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
 
     input:
     set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
-    val genome_size from GS_ORIGINAL_SUMMARY
 
     output:
     file '*.json'
     file '*fastqc.html'
     file '*fastqc.zip'
-    file 'original_summary' into ORIGINAL_SUMMARY_COMMAND
 
     shell:
     fq2 = single_end ? '' : fq[1]
+    g_param = params.genome_size ? "-g ${params.genome_size}" : ""
     """
-    pwd | tee pwd.txt
     zcat !{fq[0]} !{fq2} > !{sample}-original
-    cat !{sample}-original | fastq-scan -g !{genome_size} > fastq-scan-original.json
-    fastqc --noextract -f fastq -t !{params.cpus} !{sample}-original
+    cat !{sample}-original | fastq-scan !{g_param} > fastq-scan-original.json
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-original
     """
 }
 
 process adapter_removal {
     /* Remove Illumina related adapters using BBDuk */
-    beforeScript "echo '" + descriptions.adapter_removal + "' > adapter_removal"
-    cpus params.cpus
+    cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
+    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
@@ -123,14 +88,13 @@ process adapter_removal {
     output:
     file '*.log'
     set val(sample), val(single_end), file('adapter-r*.fq') into PHIX_REMOVAL
-    file 'adapter_removal' into ADAPTER_REMOVAL_COMMAND
 
     shell:
     adapters = params.adapters ? file(params.adapters) : 'adapters'
     in2 = single_end ? '' : 'in2=' + fq[1]
     out2 = single_end ? '' : 'out2=adapter-r2.fq'
     """
-    bbduk.sh \
+    bbduk.sh -Xmx4g \
         in=!{fq[0]} !{in2} \
         out=adapter-r1.fq !{out2} \
         ref=!{adapters} \
@@ -140,19 +104,18 @@ process adapter_removal {
         hdist=!{params.hdist} \
         tpe=!{params.tpe} \
         tbo=!{params.tbo} \
-        threads=!{params.cpus} \
+        threads=!{task.cpus} \
         ftm=!{params.ftm} \
         ordered=t \
-        stats=bbduk-adapter.log 2>&1 | tee bbduk-adapter-stdout.log
+        stats=bbduk-adapter.log
     """
 }
 
 process phix_removal {
     /* Remove contaminant (phiX) and quality-trim using BBDuk */
-    beforeScript "echo '" + descriptions.phix_removal + "' > phix_removal"
-    cpus params.cpus
+    cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
+    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from PHIX_REMOVAL
@@ -160,14 +123,13 @@ process phix_removal {
     output:
     file '*.log'
     set val(sample), val(single_end), file('phix-r*.fq') into ERROR_CORRECTION
-    file 'phix_removal' into PHIX_REMOVAL_COMMAND
 
     shell:
     phix = params.phix ? file(params.phix) : 'phix'
     in2 = single_end ? '' : 'in2=' + fq[1]
     out2 = single_end ? '' : 'out2=phix-r2.fq'
     """
-    bbduk.sh \
+    bbduk.sh -Xmx!{params.xmx} \
         in=!{fq[0]} !{in2} \
         out=phix-r1.fq !{out2} \
         ref=!{phix} \
@@ -181,185 +143,122 @@ process phix_removal {
         minavgquality=!{params.maq} \
         qout=!{params.qout} \
         tossjunk=!{params.tossjunk} \
-        threads=!{params.cpus} \
+        threads=!{task.cpus} \
         ordered=t \
-        stats=bbduk-phix.log 2>&1 | tee bbduk-phix-stdout.log
+        stats=bbduk-phix.log
     """
 }
 
 process error_correction {
     /* Attempt to correct any base-call errors using Lighter */
-    beforeScript "echo '" + descriptions.error_correction + "' > error_correction"
-    cpus params.cpus
+    cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from ERROR_CORRECTION
-    val genome_size from GS_ERROR_CORRECTION
 
     output:
     set val(sample), val(single_end), file('phix-r*.cor.fq') into REDUCE_COVERAGE
-    file '*.log'
-    file 'error_correction' into ERROR_CORRECTION_COMMAND
 
     shell:
     fq2 = single_end ? '' : '-r ' + fq[1]
-    """
-    lighter -od . -r !{fq[0]} !{fq2} -K 31 !{genome_size} -maxcor 1 \
-        -t !{params.cpus} 2>&1 | tee lighter-ecc.log
-    """
+    in2 = single_end ? '' : fq[1]
+    out2 = single_end ? '' : 'phix-r2.cor.fq'
+    cp2 = single_end ? '' : "cp ${in2} ${out2}"
+    if (params.genome_size)
+        """
+        lighter -od . -r !{fq[0]} !{fq2} -K 31 !{params.genome_size} -maxcor 1 -zlib 0 -t !{task.cpus}
+        """
+    else
+        """
+        echo "Skipping !{task.process}, genome size is set to !{params.genome_size}"
+        cp !{fq[0]} phix-r1.cor.fq
+        !{cp2}
+        """
 }
 
 process reduce_coverage {
     /* Reduce the sequence coverage using BBDuk (reformat) */
-    beforeScript "echo '" + descriptions.reduce_coverage + "' > reduce_coverage"
     cpus 1
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
 
     input:
     set val(sample), val(single_end), file(fq) from REDUCE_COVERAGE
-    val genome_size from GS_REDUCE_COVERAGE
 
     output:
-    set val(sample), val(single_end), file('subsample-r*.fq') into FINAL_SUMMARY, MASH_SKETCH, FINISH_UP
-    file '*.log'
-    file 'reduce_coverage' into REDUCE_COVERAGE_COMMAND
+    set val(sample), val(single_end), file('subsample-r*.fq') into FINAL_SUMMARY, FINISH_UP
 
     shell:
-    total_bp = params.coverage.toInteger() * genome_size.toInteger()
-    in2 = single_end ? '' : 'in2=' + fq[1]
-    out2 = single_end ? '' : 'out2=subsample-r2.fq'
-    """
-    reformat.sh \
-        in=!{fq[0]} !{in2} \
-        out=subsample-r1.fq !{out2} \
-        samplebasestarget=!{total_bp} \
-        overwrite=t 2>&1 | tee reformat.log
-    """
-}
-
-process mash_sketch {
-    /* Create a Mash Sketch of the processed FASTQ. */
-    beforeScript "echo '" + descriptions.mash_sketch + "' > mash_sketch"
-    cpus 1
-    tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc", mode: 'rellink', overwrite: true, pattern: "*.msh"
-    publishDir "${outdir}/${sample}/sequence-qc/logs", mode: 'rellink', overwrite: true, pattern: "*.log"
-
-    input:
-    set val(sample), val(single_end), file(fq) from MASH_SKETCH
-
-    output:
-    file '*.msh'
-    file 'mash-sketch-final.log'
-    file 'mash_sketch' into MASH_SKETCH_COMMAND
-
-    shell:
-    fq2 = single_end ? '' : fq[1]
-    """
-    cat !{fq[0]} !{fq2} | \
-    mash sketch -o !{sample} -s !{params.mash_s} -k !{params.mash_k} -m !{params.mash_m} -r - 2>&1 | tee mash-sketch-final.log
-    """
+    total_bp = params.coverage.toInteger() * params.genome_size.toInteger()
+    in2 = single_end ? '' : fq[1]
+    out2 = single_end ? '' : 'subsample-r2.fq'
+    bbmap_in2 = single_end ? '' : 'in2=' + fq[1]
+    bbmap_out2 = single_end ? '' : 'out2=subsample-r2.fq'
+    cp2 = single_end ? '' : "cp ${in2} ${out2}"
+    if (params.genome_size)
+        """
+        reformat.sh -Xmx!{params.xmx} \
+            in=!{fq[0]} !{bbmap_in2} \
+            out=subsample-r1.fq !{bbmap_out2} \
+            samplebasestarget=!{total_bp} \
+            sampleseed=!{params.sampleseed} \
+            overwrite=t
+        """
+    else
+        """
+        echo "Skipping !{task.process}, genome size is set to !{params.genome_size}"
+        cp !{fq[0]} subsample-r1.fq
+        !{cp2}
+        """
 }
 
 process final_summary {
     /* Run FASTQC on the processed FASTQ files. */
-    beforeScript "echo '" + descriptions.final_summary + "' > final_summary"
-    cpus params.cpus
+    cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc/summary", mode: 'rellink', overwrite: true, pattern: '*.{html,json,zip}'
+    publishDir "${outdir}/${sample}/${PROGRAM_NAME}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
 
     input:
     set val(sample), val(single_end), file(fq) from FINAL_SUMMARY
-    val genome_size from GS_FINAL_SUMMARY
 
     output:
     file '*.json'
-    file '*fastqc.html'
-    file '*fastqc.zip'
-    file 'final_summary' into FINAL_SUMMARY_COMMAND
+    file '*fastqc*'
 
     shell:
     fq2 = single_end ? '' : fq[1]
+    g_param = params.genome_size ? "-g ${params.genome_size}" : ""
     """
     cat !{fq[0]} !{fq2} > !{sample}-final
-    cat !{sample}-final | fastq-scan -g !{genome_size} > fastq-scan-final.json
-    fastqc --noextract -f fastq -t !{params.cpus} !{sample}-final
+    cat !{sample}-final | fastq-scan !{g_param} > fastq-scan-final.json
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-final
     """
 }
 
 process finish_up {
     /* Compress the processed FASTQ files. */
-    beforeScript "echo '" + descriptions.finish_up + "' > finish_up"
-    cpus 1
+    cpus cpus
     tag "${sample}"
-    publishDir "${outdir}/${sample}/sequence-qc", mode: 'rellink', overwrite: true, pattern: '*.fastq.gz'
-
+    publishDir "${outdir}/${sample}/${PROGRAM_NAME}", mode: 'copy', overwrite: true, pattern: '*.fastq.gz'
 
     input:
     set val(sample), val(single_end), file(fq) from FINISH_UP
 
     output:
     file '*.fastq.gz'
-    file 'finish_up*' into FINISH_UP_COMMAND
 
     shell:
-    if (single_end)
-        """
-        gzip --best -c -n !{fq[0]} > !{sample}.fastq.gz
-        """
-    else
-        """
-        gzip --best -c -n !{fq[0]} > !{sample}_R1.fastq.gz
-        gzip --best -c -n !{fq[1]} > !{sample}_R2.fastq.gz
-        """
-}
-
-// Merge all the .commands into a single channel
-process jsonify_commands {
-    /* Aggregate all .command files into a single json file. */
-
-    input:
-    file estimate_genome_size from ESTIMATE_GENOME_SIZE_COMMAND
-    file original_summary from ORIGINAL_SUMMARY_COMMAND
-    file adapter_removal from ADAPTER_REMOVAL_COMMAND
-    file phix_removal from PHIX_REMOVAL_COMMAND
-    file error_correction from ERROR_CORRECTION_COMMAND
-    file reduce_coverage from REDUCE_COVERAGE_COMMAND
-    file mash_sketch from MASH_SKETCH_COMMAND
-    file final_summary from FINAL_SUMMARY_COMMAND
-    file finish_up from FINISH_UP_COMMAND
-
-    output:
-    file 'work-summary.json' into WORK_SUMMARY
-
-    shell:
+    out1 = single_end ? "${sample}.fastq.gz" : "${sample}_R1.fastq.gz"
+    gzip2 = single_end ? "" : "pigz -p ${task.cpus} -c -n ${fq[1]} > ${sample}_R2.fastq.gz"
     """
-    ls | grep -v ".txt" > processes.txt
-
-    bbduk.sh --version 2>&1 | grep "BBMap version" | sed 's/version //' > versions.txt
-    fastqc --version >> versions.txt
-    fastq-scan -v >> versions.txt
-    lighter -v >> versions.txt
-    echo mash `mash --version` >> versions.txt
-
-    jsonify-nextflow-process.py processes.txt versions.txt > work-summary.json
+    pigz -p !{task.cpus} -c -n !{fq[0]} > !{out1}
+    !{gzip2}
     """
 }
+
 
 /* ==== END FASTQ CLEANUP ==== */
 workflow.onComplete {
-    /*
-    if (workflow.success == true && params.clear_cache_on_success) {
-        // No need to resume completed run so remove cache.
-        file('./work/').deleteDir()
-        if (params.clear_logs) {
-            file(logs_folder).deleteDir()
-        }
-    }
-    */
     println """
     Pipeline execution summary
     ---------------------------
@@ -375,126 +274,133 @@ workflow.onComplete {
     """
 }
 
-// Utility Functions
-def print_version() {
-    println(NAME + ' ' + VERSION)
+// Utility functions
+def print_usage() {
+    log.info"""
+        ${PROGRAM_NAME} v${VERSION}
+        Usage: illumina-cleanup --fastqs input_fastqs.txt --max_cpus 8
+
+        Requirements: bbmap fastqc fastq-scan lighter nextflow pigz
+
+        Required Parameters:
+            --fastqs STR        An input file containing the sample name and absolute
+                                    paths to FASTQs to process.
+
+            --max_cpus INT       The maximum number of processors this workflow should
+                                     have access to at any given moment. The default
+                                     for Nextflow is to use all available processors.
+
+            --example_fastqs    Print an example of expected input for FASTQs file.
+
+            --check_fastqs      Verify "--fastqs" produces the expected inputs.
+
+             -name              Name for the pipeline run. If not specified, Nextflow
+                                    will automatically generate a random mnemonic.
+        Optional Parameters:
+
+            --coverage INT      Reduce samples to a given coverage. (Default: 100)
+
+            --genome_size INT   Expected genome size (bp) for all samples. (Default: 0).
+
+            --outdir DIR        Directory to write results to. (Default ./)
+
+            --cpus INT          Number of processors made available to a single process.
+                                    If greater than "--max_cpus" it will be set equal to
+                                    "--max_cpus" (Default: 1)
+
+        BBDuk Parameters:
+            --adapters FASTA    Illumina adapters to remove (Default: BBmap adapters)
+
+            --adapter_k INT     Kmer length used for finding adapters. Adapters
+                                    shorter than k will not be found. (Default: 23)
+
+            --phix FASTA        phiX174 reference genome to remove (Default: NC_001422)
+
+            --phix_k INT        Kmer length used for finding phiX174. Contaminants
+                                    shorter than k will not be found. (Default: 31)
+
+            --ktrim STR         Trim reads to remove bases matching reference kmers.
+                                    Values:
+                                        f (do not trim)
+                                        r (trim to the right, Default)
+                                        l (trim to the left)
+
+            --mink INT          Look for shorter kmers at read tips down to this
+                                    length, when k-trimming or masking. 0 means
+                                    disabled. Enabling this will disable maskmiddle.
+                                    (Default: 11)
+
+            --hdist INT         Maximum Hamming distance for ref kmers (subs only).
+                                    Memory use is proportional to (3*K)^hdist.
+                                    (Default: 1)
+
+            --tpe BOOL          When kmer right-trimming, trim both reads to the
+                                    minimum length of either.
+                                    Values:
+                                        f (do not equally trim)
+                                        t (equally trim to the right, Default)
+
+            --tbo BOOL          Trim adapters based on where paired reads overlap.
+                                    Values:
+                                        f (do not trim by overlap)
+                                        t (trim by overlap, Default)
+
+            --qtrim STR         Trim read ends to remove bases with quality below
+                                    trimq. Performed AFTER looking for kmers. Values:
+                                        rl (trim both ends, Default)
+                                        f (neither end)
+                                        r (right end only)
+                                        l (left end only)
+                                        w (sliding window)
+
+            --trimq FLOAT       Regions with average quality BELOW this will be
+                                    trimmed if qtrim is set to something other than f.
+                                    (Default: 6)
+
+            --maq INT           Reads with average quality (after trimming) below
+                                    this will be discarded. (Default: 20)
+
+            --minlength INT     Reads shorter than this after trimming will be
+                                    discarded. Pairs will be discarded if both are
+                                    shorter. (Default: 35)
+
+            --ftm INT           If positive, right-trim length to be equal to zero,
+                                    modulo this number. (Default: 0)
+
+            --tossjunk          Discard reads with invalid characters as bases.
+                                    Values:
+                                        f (keep all reads)
+                                        t (toss reads with ambiguous bases, Default)
+
+            --qout STR          Output quality offset.
+                                    Values:
+                                        33 (PHRED33 offset quality scores, Default)
+                                        64 (PHRED64 offset quality scores)
+                                        auto (keeps the current input offset)
+
+            --xmx STR           This will be passed to Java to set memory usage.
+                                    Examples:
+                                        8g will specify 8 gigs of RAM (Default)
+                                        20g will specify 20 gigs of RAM
+                                        200m will specify 200 megs of RAM
+
+        Lighter Parameters:
+            --maxcor INT        Max number of corrections within a 20bp window
+                                    (Default: 1)
+
+        Reformat (BBmap) Parameters:
+            --sampleseed INT    Set to a positive number to use that prng seed for
+                                    sampling (Default 42).
+
+            --version           Print workflow version information
+            --help              Show this message and exit
+    """.stripIndent()
+
     exit 0
 }
 
-def print_usage() {
-    log.info NAME + ' v' + VERSION
-    log.info ''
-    log.info 'Requirements: bbmap fastqc fastq-scan lighter mash nextflow'
-    log.info ''
-    log.info 'Required Options:'
-    log.info '    --fastqs DIR        An input file containing the sample name and absolute'
-    log.info '                            paths to FASTQs to process.'
-    log.info ''
-    log.info 'Optional Parameters:'
-    log.info ''
-    log.info '    --example_fastqs    Print an example of expected input for FASTQs file.'
-    log.info ''
-    log.info '    --check_fastqs      Verify "--fastqs" produces the expected output'
-    log.info ''
-    log.info '    --coverage INT      Reduce samples to a given coverage. (Default: 100)'
-    log.info ''
-    log.info '    --genome_size INT   Expected genome size (bp). (Default: mash estimate).'
-    log.info ''
-    log.info '    --outdir DIR        Directory to write results to. (Default ./)'
-    log.info ''
-    log.info '    --cpus INT          Number of processors to use for processing. '
-    log.info '                           (Default: 1)'
-    log.info ''
-    log.info 'Mash Sketch Parameters:'
-    log.info '    --mash_s INT        Sketch size. Each sketch will have at most this many '
-    log.info '                            non-redundant min-hashes. (Default: 10000)'
-    log.info ''
-    log.info '    --mash_k INT        K-mer size. Hashes will be based on strings of this '
-    log.info '                            many nucleotides. (Default: 31)'
-    log.info ''
-    log.info '    --mash_m INT        Minimum copies of each k-mer required to pass noise '
-    log.info '                            filter for reads. (Default 3)'
-    log.info ''
-    log.info 'BBDuk Parameters:'
-    log.info '    --adapters FASTA    Illumina adapters to remove (Default: BBmap adapters)'
-    log.info ''
-    log.info '    --adapter_k INT     Kmer length used for finding adapters. Adapters'
-    log.info '                            shorter than k will not be found. (Default: 23)'
-    log.info ''
-    log.info '    --phix FASTA        phiX174 reference genome to remove (Default: NC_001422)'
-    log.info ''
-    log.info '    --phix_k INT        Kmer length used for finding phiX174. Contaminants'
-    log.info '                            shorter than k will not be found. (Default: 31)'
-    log.info ''
-    log.info '    --ktrim STR         Trim reads to remove bases matching reference kmers.'
-    log.info '                            Values:'
-    log.info '                                f (do not trim),'
-    log.info '                                r (trim to the right, Default),'
-    log.info '                                l (trim to the left)'
-    log.info ''
-    log.info '    --mink INT          Look for shorter kmers at read tips down to this '
-    log.info '                            length, when k-trimming or masking. 0 means '
-    log.info '                            disabled. Enabling this will disable maskmiddle.'
-    log.info '                            (Default: 11)'
-    log.info ''
-    log.info '    --hdist INT         Maximum Hamming distance for ref kmers (subs only).'
-    log.info '                            Memory use is proportional to (3*K)^hdist.'
-    log.info '                            (Default: 1)'
-    log.info ''
-    log.info '    --tpe BOOL          When kmer right-trimming, trim both reads to the '
-    log.info '                            minimum length of either.'
-    log.info '                            Values:'
-    log.info '                                f (do not equally trim),'
-    log.info '                                t (equally trim to the right, Default)'
-    log.info ''
-    log.info '    --tbo BOOL          Trim adapters based on where paired reads overlap.'
-    log.info '                            Values:'
-    log.info '                                f (do not trim by overlap),'
-    log.info '                                t (trim by overlap, Default)'
-    log.info ''
-    log.info '    --qtrim STR         Trim read ends to remove bases with quality below '
-    log.info '                            trimq. Performed AFTER looking for kmers. Values:'
-    log.info '                                rl (trim both ends, Default),'
-    log.info '                                f (neither end),'
-    log.info '                                r (right end only),'
-    log.info '                                l (left end only),'
-    log.info '                                w (sliding window)'
-    log.info ''
-    log.info '    --trimq FLOAT       Regions with average quality BELOW this will be '
-    log.info '                            trimmed if qtrim is set to something other than f.'
-    log.info '                            (Default: 6)'
-    log.info ''
-    log.info '    --maq INT           Reads with average quality (after trimming) below '
-    log.info '                            this will be discarded. (Default: 20)'
-    log.info ''
-    log.info '    --minlength INT     Reads shorter than this after trimming will be '
-    log.info '                            discarded. Pairs will be discarded if both are '
-    log.info '                            shorter. (Default: 35)'
-    log.info ''
-    log.info '    --ftm INT           If positive, right-trim length to be equal to zero, '
-    log.info '                            modulo this number. (Default: 0)'
-    log.info ''
-    log.info '    --tossjunk          Discard reads with invalid characters as bases.'
-    log.info '                            Values:'
-    log.info '                                f (keep all reads),'
-    log.info '                                t (toss reads with ambiguous bases, Default)'
-    log.info ''
-    log.info '    --qout STR          Output quality offset.'
-    log.info '                            Values:'
-    log.info '                                33 (PHRED33 offset quality scores, Default),'
-    log.info '                                64 (PHRED64 offset quality scores)'
-    log.info '                                auto (keeps the current input offset)'
-    log.info ''
-    log.info 'Lighter Parameters:'
-    log.info '    --maxcor INT        Max number of corrections within a 20bp window '
-    log.info '                            (Default: 1)'
-    log.info ''
-    log.info '    --version           Print version information'
-    log.info '    --help              Show this message and exit'
-    log.info ''
-    log.info 'Usage:'
-    log.info '    nextflow illumina-cleanup.nf --fastqs my_fastqs.txt'
-
+def print_version() {
+    println(PROGRAM_NAME + ' ' + VERSION)
     exit 0
 }
 
@@ -518,6 +424,25 @@ def print_check_fastqs(fastq_input) {
     exit 0
 }
 
+def is_positive_integer(value, name) {
+    is_positive = true
+    if (value.getClass() == Integer) {
+        if (value < 0) {
+            log.info('Invalid input (--'+ name +'), "' + value + '"" is not a positive integer.')
+            is_positive = false
+        }
+    } else {
+        if (!value.isInteger()) {
+            log.info('Invalid input (--'+ name +'), "' + value + '"" is not numeric.')
+            is_positive = false
+        } else if (value.toInteger() < 0) {
+            log.info('Invalid input (--'+ name +'), "' + value + '"" is not a positive integer.')
+            is_positive = false
+        }
+    }
+    return is_positive
+}
+
 def check_input_params() {
     error = false
     missing_requirement = false
@@ -526,6 +451,21 @@ def check_input_params() {
         error = true
     } else if (!file(params.fastqs).exists()) {
         log.info('Invalid input (--fastqs), please verify "' + params.fastqs + '"" exists.')
+        error = true
+    }
+
+    if (!params.max_cpus) {
+        log.info('Missing required "--max_cpus" input')
+        error = true
+    } else if (!is_positive_integer(params.max_cpus, 'max_cpus')) {
+        error = true
+    }
+
+    if (!is_positive_integer(params.cpus, 'cpus')) {
+        error = true
+    }
+
+    if (!is_positive_integer(params.genome_size, 'genome_size')) {
         error = true
     }
 
@@ -569,6 +509,7 @@ def check_input_fastqs(fastq_input) {
     /* Read through --fastqs and verify each input exists. */
     samples = [:]
     error = false
+    line = 1
     file(fastq_input).splitEachLine('\t') { cols ->
         if (cols[0] != 'sample') {
             if (samples.containsKey(cols[0])) {
@@ -578,17 +519,18 @@ def check_input_fastqs(fastq_input) {
             }
             if (cols[1]) {
                 if (!file(cols[1]).exists()) {
-                    log.info 'Error: Please verify ' + cols[1]+ ' exists, and try again'
+                    log.info line + ':ERROR: Please verify ' + cols[1]+ ' exists, and try again'
                     error = true
                 }
             }
             if (cols[2]) {
                 if (!file(cols[2]).exists()) {
-                    log.info 'Error: Please verify ' + cols[2]+ ' exists, and try again'
+                    log.info line + ':ERROR: Please verify ' + cols[2]+ ' exists, and try again'
                     error = true
                 }
             }
         }
+        line = line + 1
     }
 
     samples.each{ sample, count ->
@@ -604,55 +546,4 @@ def check_input_fastqs(fastq_input) {
         log.info 'Exiting'
         exit 1
     }
-}
-
-def get_process_descriptions() {
-    def descriptions = [:]
-    descriptions['estimate_genome_size'] = (
-        "If a genome size is not given, `mash` is used to estimate the " +
-        "genome size of the input sequences. The genome size is neccessary " +
-        "for estimating genome coverage and reducing to a set coverage."
-    )
-    descriptions['original_summary'] = (
-        "`FastQC` and `fastq-scan` are used to determine sequencing metrics " +
-        "corresponding to original raw sequences before any processing has " +
-        "occured."
-    )
-    descriptions['adapter_removal'] = (
-        "Illumina adapters that may be present in the raw sequences are " +
-        "trimmed away with `BBDuk`."
-    )
-    descriptions['phix_removal'] = (
-        "Any reads contaminated with phiX 174 sequences are removed using " +
-        "`BBDuk`. Reads also under go quality control by making sure each " +
-        "read meets quality and length thresholds set by the user."
-    )
-    descriptions['error_correction'] = (
-        "`Lighter` is used to correct any sequencing errors that might be " +
-        "present in the reads."
-    )
-    descriptions['reduce_coverage'] = (
-        "Using the estimated genome size, the processed reads are randomly " +
-        "subsampled to a given genome coverage by `reformat.sh` (from BBMap)."
-    )
-    descriptions['mash_sketch'] = (
-        "A minmer sketch representing the final set of cleaned up reads is " +
-        "created using `mash`."
-    )
-    descriptions['final_summary'] = (
-        "`FastQC` and `fastq-scan` are used to determine sequencing metrics " +
-        "corresponding to sequences after the clean up process has completed."
-    )
-    descriptions['finish_up'] = (
-        "After clean up has completed the final FASTQ file(s) are " +
-        "compressed using Gzip."
-    )
-    return descriptions
-}
-
-def summarize_run(process_json, versions) {
-    /* Summarize results from this workflow run into Markdown/PDF format. */
-    summary = [:]
-
-
 }

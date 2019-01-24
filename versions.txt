@@ -1,0 +1,6 @@
+nextflow 19.01.0
+BBMap 38.22
+FastQC v0.11.8.1
+fastq-scan 0.3
+Lighter v1.1.2
+pigz 2.3.4
