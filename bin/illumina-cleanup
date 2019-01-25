@@ -6,6 +6,7 @@ params.help = null
 params.version = null
 params.example_fastqs = null
 params.check_fastqs = null
+params.max_cpus = 1
 params.cpus = 1
 params.fastqs = null
 params.outdir = null
@@ -38,7 +39,6 @@ if (workflow.commandLine.endsWith(workflow.scriptName)) print_usage();
 if (params.example_fastqs) print_example_fastqs();
 if (params.version) print_version();
 if (params.help) print_usage();
-check_dependencies()
 check_input_params()
 check_input_fastqs(params.fastqs)
 if (params.check_fastqs) print_check_fastqs(params.fastqs);
@@ -314,10 +314,6 @@ def print_usage() {
             --fastqs STR        An input file containing the sample name and absolute
                                     paths to FASTQs to process.
 
-            --max_cpus INT       The maximum number of processors this workflow should
-                                     have access to at any given moment. The default
-                                     for Nextflow is to use all available processors.
-
             --example_fastqs    Print an example of expected input for FASTQs file.
 
             --check_fastqs      Verify "--fastqs" produces the expected inputs.
@@ -325,6 +321,8 @@ def print_usage() {
              -name              Name for the pipeline run. If not specified, Nextflow
                                     will automatically generate a random mnemonic.
         Optional Parameters:
+            --max_cpus INT       The maximum number of processors this workflow should
+                                     have access to at any given moment. (Default: 1)
 
             --coverage INT      Reduce samples to a given coverage. (Default: 100)
 
@@ -484,10 +482,7 @@ def check_input_params() {
         error = true
     }
 
-    if (!params.max_cpus) {
-        log.info('Missing required "--max_cpus" input')
-        error = true
-    } else if (!is_positive_integer(params.max_cpus, 'max_cpus')) {
+    if (!is_positive_integer(params.max_cpus, 'max_cpus')) {
         error = true
     }
 
