@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 import groovy.json.JsonOutput
 PROGRAM_NAME = 'illumina-cleanup'
-VERSION = 1.0.0
+VERSION = "1.0.0"
 params.help = null
 params.version = null
 params.example_fastqs = null
@@ -38,6 +38,7 @@ if (workflow.commandLine.endsWith(workflow.scriptName)) print_usage();
 if (params.example_fastqs) print_example_fastqs();
 if (params.version) print_version();
 if (params.help) print_usage();
+check_dependencies()
 check_input_params()
 check_input_fastqs(params.fastqs)
 if (params.check_fastqs) print_check_fastqs(params.fastqs);
