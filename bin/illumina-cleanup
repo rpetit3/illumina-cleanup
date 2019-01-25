@@ -68,13 +68,22 @@ process original_summary {
     file '*fastqc.zip'
 
     shell:
-    fq2 = single_end ? '' : fq[1]
     g_param = params.genome_size ? "-g ${params.genome_size}" : ""
+    if (single_end)
     """
-    zcat !{fq[0]} !{fq2} > !{sample}-original
-    cat !{sample}-original | fastq-scan !{g_param} > fastq-scan-original.json
-    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-original
+    zcat !{fq[0]} | fastq-scan !{g_param} > !{sample}-original.json
+    ln -s !{fq[0]} !{sample}-original.fastq.gz
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-original.fastq.gz
     """
+    else
+    """
+    zcat !{fq[0]} | fastq-scan !{g_param} > !{sample}_R1-original.json
+    zcat !{fq[1]} | fastq-scan !{g_param} > !{sample}_R2-original.json
+    ln -s !{fq[0]} !{sample}_R1-original.fastq.gz
+    ln -s !{fq[1]} !{sample}_R2-original.fastq.gz
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}_R1-original.fastq.gz !{sample}_R2-original.fastq.gz
+    """
+
 }
 
 process adapter_removal {
@@ -165,7 +174,7 @@ process error_correction {
     fq2 = single_end ? '' : '-r ' + fq[1]
     in2 = single_end ? '' : fq[1]
     out2 = single_end ? '' : 'phix-r2.cor.fq'
-    cp2 = single_end ? '' : "cp ${in2} ${out2}"
+    ln2 = single_end ? '' : "ln -s ${in2} ${out2}"
     if (params.genome_size)
         """
         lighter -od . -r !{fq[0]} !{fq2} -K 31 !{params.genome_size} -maxcor 1 -zlib 0 -t !{task.cpus}
@@ -173,8 +182,8 @@ process error_correction {
     else
         """
         echo "Skipping !{task.process}, genome size is set to !{params.genome_size}"
-        cp !{fq[0]} phix-r1.cor.fq
-        !{cp2}
+        ln -s !{fq[0]} phix-r1.cor.fq
+        !{ln2}
         """
 }
 
@@ -195,7 +204,7 @@ process reduce_coverage {
     out2 = single_end ? '' : 'subsample-r2.fq'
     bbmap_in2 = single_end ? '' : 'in2=' + fq[1]
     bbmap_out2 = single_end ? '' : 'out2=subsample-r2.fq'
-    cp2 = single_end ? '' : "cp ${in2} ${out2}"
+    cp2 = single_end ? '' : "ln -s ${in2} ${out2}"
     if (params.genome_size)
         """
         reformat.sh -Xmx!{params.xmx} \
@@ -208,7 +217,7 @@ process reduce_coverage {
     else
         """
         echo "Skipping !{task.process}, genome size is set to !{params.genome_size}"
-        cp !{fq[0]} subsample-r1.fq
+        ln -s !{fq[0]} subsample-r1.fq
         !{cp2}
         """
 }
@@ -227,12 +236,20 @@ process final_summary {
     file '*fastqc*'
 
     shell:
-    fq2 = single_end ? '' : fq[1]
     g_param = params.genome_size ? "-g ${params.genome_size}" : ""
+    if (single_end)
     """
-    cat !{fq[0]} !{fq2} > !{sample}-final
-    cat !{sample}-final | fastq-scan !{g_param} > fastq-scan-final.json
-    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-final
+    cat !{fq[0]} | fastq-scan !{g_param} > !{sample}-final.json
+    ln -s !{fq[0]} !{sample}-final.fastq
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-final.fastq
+    """
+    else
+    """
+    cat !{fq[0]} | fastq-scan !{g_param} > !{sample}_R1-final.json
+    cat !{fq[1]} | fastq-scan !{g_param} > !{sample}_R2-final.json
+    ln -s !{fq[0]} !{sample}_R1-final.fastq
+    ln -s !{fq[1]} !{sample}_R2-final.fastq
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}_R1-final.fastq !{sample}_R2-final.fastq
     """
 }
 
@@ -249,11 +266,14 @@ process finish_up {
     file '*.fastq.gz'
 
     shell:
-    out1 = single_end ? "${sample}.fastq.gz" : "${sample}_R1.fastq.gz"
-    gzip2 = single_end ? "" : "pigz -p ${task.cpus} -c -n ${fq[1]} > ${sample}_R2.fastq.gz"
+    if (single_end)
     """
-    pigz -p !{task.cpus} -c -n !{fq[0]} > !{out1}
-    !{gzip2}
+    pigz -p !{task.cpus} -c -n !{fq[0]} > !{sample}.fastq.gz
+    """
+    else
+    """
+    pigz -p !{task.cpus} -c -n !{fq[0]} > !{sample}_R1.fastq.gz
+    pigz -p !{task.cpus} -c -n !{fq[1]} > !{sample}_R2.fastq.gz
     """
 }
 
