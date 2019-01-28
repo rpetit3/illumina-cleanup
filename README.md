@@ -1,5 +1,40 @@
+A Nextflow powered pipeline for cleaning up Illumina sequence reads.
+
 # illumina-cleanup
-A simple pipeline to cleanup Illumina FASTQ files. 
+*illumina-cleanup* is a simple Nextflow pipeline to cleanup Illumina FASTQ files. It is essentially a wrapper around [FastQC](http://www.bioinformatics.babraham.ac.uk/projects/fastqc/), [BBTools](https://jgi.doe.gov/data-and-tools/bbtools/) (BBDuk, Reformat), [Lighter](https://github.com/mourisl/Lighter) and [fastq-scan](https://github.com/rpetit3/fastq-scan).
+
+# Installation
+### Bioconda
+
+
+### From Souce
+# Dependencies
+In order to use *illumina-cleanup* you will need to have the following programs installed. The program versions that were tested are given in parentheses.
+
+* __Nextflow (v19.01.0)__  
+Used to manage the workflow.  
+_Di Tommaso, P., Chatzou, M., Floden, E.W., Barja, P.P., Palumbo, E., Notredame, C., 2017. [Nextflow enables reproducible computational workflows.](https://www.nature.com/articles/nbt.3820.pdf?origin=ppub) Nat. Biotechnol. 35, 316–319._
+
+* __BBTools (v38.34)__  
+Used *BBDuk* and *Reformat* for removing adapters, PhiX contaminants, quality (PHRED-based) filtering, and randomly subsampling.  
+_[BBTools Home Page](https://jgi.doe.gov/data-and-tools/bbtools/)_
+
+* __FastQC (v0.11.8)__  
+Used to generate visuals of sequencing quality and as input for [MultiQC](https://multiqc.info/)  
+_Andrews, S. FastQC: a quality control tool for high throughput sequence data.
+(http://www.bioinformatics.babraham.ac.uk/projects/fastqc)._
+
+* __fastq-scan (v0.3)__  
+Used to get a quick summary of sequencing quality in JSON format.  
+_[fastq-scan Home Page](https://github.com/rpetit3/fastq-scan)_
+
+* __Lighter (v1.1.2)__  
+Used for sequence error correction.   
+_Song, L., Florea, L. and Langmead, B., [Lighter: Fast and Memory-efficient Sequencing Error Correction without Counting](http://genomebiology.com/2014/15/11/509/). Genome Biol. 2014 Nov 15;15(11):509._
+
+* __pigz (v2.3.4)__  
+Used to speed up G-zip steps.  
+_Adler, Mark. "pigz: A parallel implementation of gzip for modern multi-processor, multi-core machines." Jet Propulsion Laboratory (2015)._
 
 ```
 illumina-cleanup
