@@ -1,0 +1,3 @@
+sample	r1	r2
+test001	/home/rpetit/illumina-cleanup/test/fastqs/test_R1.fastq.gz	/home/rpetit/illumina-cleanup/test/fastqs/test_R2.fastq.gz
+test002	/home/rpetit/illumina-cleanup/test/fastqs/test.fastq.gz

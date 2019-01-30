@@ -1,0 +1,585 @@
+#!/usr/bin/env nextflow
+import groovy.json.JsonOutput
+PROGRAM_NAME = 'illumina-cleanup'
+VERSION = "1.0.0"
+params.help = null
+params.version = null
+params.example_fastqs = null
+params.check_fastqs = null
+params.max_cpus = 1
+params.cpus = 1
+params.fastqs = null
+params.outdir = null
+params.single_end = null
+params.genome_size = 0
+params.coverage = '100'
+params.adapters = null
+params.ktrim = 'r'
+params.adapter_k = 23
+params.mink = 11
+params.hdist = 1
+params.tpe = 't'
+params.tbo = 't'
+params.phix = null
+params.phix_k = 31
+params.qtrim = 'rl'
+params.trimq = 6
+params.minlength = 35
+params.maq = 20
+params.qout = 33
+params.tossjunk = 't'
+params.ftm = 5
+params.xmx = '8g'
+params.maxcor = 1
+params.sampleseed = 42
+params.keep_cache = false
+
+// Parse input parameters
+if (workflow.commandLine.endsWith(workflow.scriptName)) print_usage();
+if (params.example_fastqs) print_example_fastqs();
+if (params.version) print_version();
+if (params.help) print_usage();
+check_input_params()
+check_input_fastqs(params.fastqs)
+if (params.check_fastqs) print_check_fastqs(params.fastqs);
+
+// Set the maximum number of cpus to use
+config.poolSize = params.max_cpus.toInteger()
+cpus = params.cpus
+if (cpus > params.max_cpus) {
+    cpus = params.max_cpus
+    log.info "--cpus ${params.cpus} exceeded --max_cpus ${params.max_cpus}, changed ${params.cpus} to ${cpus}"
+}
+
+// Setup output directories
+outdir = params.outdir ? params.outdir : './'
+
+process original_summary {
+    /* Run FASTQC on the input FASTQ files. */
+    cpus cpus
+    tag "${sample}"
+    publishDir "${outdir}/${sample}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
+
+    input:
+    set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
+
+    output:
+    file '*.json'
+    file '*fastqc.html'
+    file '*fastqc.zip'
+
+    shell:
+    g_param = params.genome_size ? "-g ${params.genome_size}" : ""
+    if (single_end)
+    """
+    zcat !{fq[0]} | fastq-scan !{g_param} > !{sample}-original.json
+    ln -s !{fq[0]} !{sample}-original.fastq.gz
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-original.fastq.gz
+    """
+    else
+    """
+    zcat !{fq[0]} | fastq-scan !{g_param} > !{sample}_R1-original.json
+    zcat !{fq[1]} | fastq-scan !{g_param} > !{sample}_R2-original.json
+    ln -s !{fq[0]} !{sample}_R1-original.fastq.gz
+    ln -s !{fq[1]} !{sample}_R2-original.fastq.gz
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}_R1-original.fastq.gz !{sample}_R2-original.fastq.gz
+    """
+
+}
+
+process adapter_removal {
+    /* Remove Illumina related adapters using BBDuk */
+    cpus cpus
+    tag "${sample}"
+    publishDir "${outdir}/${sample}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
+
+    input:
+    set val(sample), val(single_end), file(fq) from create_fastq_channel(params.fastqs)
+
+    output:
+    file '*.log'
+    set val(sample), val(single_end), file('adapter-r*.fq') into PHIX_REMOVAL
+
+    shell:
+    adapters = params.adapters ? file(params.adapters) : 'adapters'
+    in2 = single_end ? '' : 'in2=' + fq[1]
+    out2 = single_end ? '' : 'out2=adapter-r2.fq'
+    """
+    bbduk.sh -Xmx4g \
+        in=!{fq[0]} !{in2} \
+        out=adapter-r1.fq !{out2} \
+        ref=!{adapters} \
+        k=!{params.adapter_k} \
+        ktrim=!{params.ktrim} \
+        mink=!{params.mink} \
+        hdist=!{params.hdist} \
+        tpe=!{params.tpe} \
+        tbo=!{params.tbo} \
+        threads=!{task.cpus} \
+        ftm=!{params.ftm} \
+        ordered=t \
+        stats=bbduk-adapter.log
+    """
+}
+
+process phix_removal {
+    /* Remove contaminant (phiX) and quality-trim using BBDuk */
+    cpus cpus
+    tag "${sample}"
+    publishDir "${outdir}/${sample}/logs", mode: 'copy', overwrite: true, pattern: "*.log"
+
+    input:
+    set val(sample), val(single_end), file(fq) from PHIX_REMOVAL
+
+    output:
+    file '*.log'
+    set val(sample), val(single_end), file('phix-r*.fq') into ERROR_CORRECTION
+
+    shell:
+    phix = params.phix ? file(params.phix) : 'phix'
+    in2 = single_end ? '' : 'in2=' + fq[1]
+    out2 = single_end ? '' : 'out2=phix-r2.fq'
+    """
+    bbduk.sh -Xmx!{params.xmx} \
+        in=!{fq[0]} !{in2} \
+        out=phix-r1.fq !{out2} \
+        ref=!{phix} \
+        k=!{params.phix_k} \
+        hdist=!{params.hdist} \
+        tpe=!{params.tpe} \
+        tbo=!{params.tbo} \
+        qtrim=!{params.qtrim} \
+        trimq=!{params.trimq} \
+        minlength=!{params.minlength} \
+        minavgquality=!{params.maq} \
+        qout=!{params.qout} \
+        tossjunk=!{params.tossjunk} \
+        threads=!{task.cpus} \
+        ordered=t \
+        stats=bbduk-phix.log
+    """
+}
+
+process error_correction {
+    /* Attempt to correct any base-call errors using Lighter */
+    cpus cpus
+    tag "${sample}"
+
+    input:
+    set val(sample), val(single_end), file(fq) from ERROR_CORRECTION
+
+    output:
+    set val(sample), val(single_end), file('phix-r*.cor.fq') into REDUCE_COVERAGE
+
+    shell:
+    fq2 = single_end ? '' : '-r ' + fq[1]
+    in2 = single_end ? '' : fq[1]
+    out2 = single_end ? '' : 'phix-r2.cor.fq'
+    ln2 = single_end ? '' : "ln -s ${in2} ${out2}"
+    if (params.genome_size)
+        """
+        lighter -od . -r !{fq[0]} !{fq2} -K 31 !{params.genome_size} -maxcor 1 -zlib 0 -t !{task.cpus}
+        """
+    else
+        """
+        echo "Skipping !{task.process}, genome size is set to !{params.genome_size}"
+        ln -s !{fq[0]} phix-r1.cor.fq
+        !{ln2}
+        """
+}
+
+process reduce_coverage {
+    /* Reduce the sequence coverage using BBDuk (reformat) */
+    cpus 1
+    tag "${sample}"
+
+    input:
+    set val(sample), val(single_end), file(fq) from REDUCE_COVERAGE
+
+    output:
+    set val(sample), val(single_end), file('subsample-r*.fq') into FINAL_SUMMARY, FINISH_UP
+
+    shell:
+    total_bp = params.coverage.toInteger() * params.genome_size.toInteger()
+    in2 = single_end ? '' : fq[1]
+    out2 = single_end ? '' : 'subsample-r2.fq'
+    bbmap_in2 = single_end ? '' : 'in2=' + fq[1]
+    bbmap_out2 = single_end ? '' : 'out2=subsample-r2.fq'
+    cp2 = single_end ? '' : "ln -s ${in2} ${out2}"
+    if (params.genome_size)
+        """
+        reformat.sh -Xmx!{params.xmx} \
+            in=!{fq[0]} !{bbmap_in2} \
+            out=subsample-r1.fq !{bbmap_out2} \
+            samplebasestarget=!{total_bp} \
+            sampleseed=!{params.sampleseed} \
+            overwrite=t
+        """
+    else
+        """
+        echo "Skipping !{task.process}, genome size is set to !{params.genome_size}"
+        ln -s !{fq[0]} subsample-r1.fq
+        !{cp2}
+        """
+}
+
+process final_summary {
+    /* Run FASTQC on the processed FASTQ files. */
+    cpus cpus
+    tag "${sample}"
+    publishDir "${outdir}/${sample}/summary", mode: 'copy', overwrite: true, pattern: '*.{html,json,zip}'
+
+    input:
+    set val(sample), val(single_end), file(fq) from FINAL_SUMMARY
+
+    output:
+    file '*.json'
+    file '*fastqc*'
+
+    shell:
+    g_param = params.genome_size ? "-g ${params.genome_size}" : ""
+    if (single_end)
+    """
+    cat !{fq[0]} | fastq-scan !{g_param} > !{sample}-final.json
+    ln -s !{fq[0]} !{sample}-final.fastq
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}-final.fastq
+    """
+    else
+    """
+    cat !{fq[0]} | fastq-scan !{g_param} > !{sample}_R1-final.json
+    cat !{fq[1]} | fastq-scan !{g_param} > !{sample}_R2-final.json
+    ln -s !{fq[0]} !{sample}_R1-final.fastq
+    ln -s !{fq[1]} !{sample}_R2-final.fastq
+    fastqc --noextract -f fastq -t !{task.cpus} !{sample}_R1-final.fastq !{sample}_R2-final.fastq
+    """
+}
+
+process finish_up {
+    /* Compress the processed FASTQ files. */
+    cpus cpus
+    tag "${sample}"
+    publishDir "${outdir}/${sample}", mode: 'copy', overwrite: true, pattern: '*.fastq.gz'
+
+    input:
+    set val(sample), val(single_end), file(fq) from FINISH_UP
+
+    output:
+    file '*.fastq.gz'
+
+    shell:
+    if (single_end)
+    """
+    pigz -p !{task.cpus} -c -n !{fq[0]} > !{sample}.fastq.gz
+    """
+    else
+    """
+    pigz -p !{task.cpus} -c -n !{fq[0]} > !{sample}_R1.fastq.gz
+    pigz -p !{task.cpus} -c -n !{fq[1]} > !{sample}_R2.fastq.gz
+    """
+}
+
+
+/* ==== END FASTQ CLEANUP ==== */
+workflow.onComplete {
+    if (workflow.success == true && params.keep_cache == false) {
+        // No need to resume completed run so remove cache.
+        file('./work/').deleteDir()
+        file('./.nextflow/').deleteDir()
+        file('.nextflow.log').delete()
+    }
+    println """
+    Pipeline execution summary
+    ---------------------------
+    Completed at: ${workflow.complete}
+    Duration    : ${workflow.duration}
+    Success     : ${workflow.success}
+    Launch Dir  : ${workflow.launchDir}
+    Working Dir : ${workflow.workDir}
+    exit status : ${workflow.exitStatus}
+    Command line: ${workflow.commandLine}
+    Resumed?    : ${workflow.resume}
+    Error report: ${workflow.errorReport ?: '-'}
+    """
+}
+
+// Utility functions
+def print_usage() {
+    log.info"""
+        ${PROGRAM_NAME} v${VERSION}
+        Usage: illumina-cleanup --fastqs input_fastqs.txt --max_cpus 8
+
+        Requirements: bbmap fastqc fastq-scan lighter nextflow pigz
+
+        Required Parameters:
+            --fastqs STR        An input file containing the sample name and absolute
+                                    paths to FASTQs to process.
+
+
+        Optional Parameters:
+            --coverage INT      Reduce samples to a given coverage. (Default: 100)
+
+            --genome_size INT   Expected genome size (bp) for all samples. (Default: 0).
+
+            --outdir DIR        Directory to write results to. (Default ./)
+
+            --max_cpus INT       The maximum number of processors this workflow should
+                                     have access to at any given moment. (Default: 1)
+
+            --cpus INT          Number of processors made available to a single process.
+                                    If greater than "--max_cpus" it will be set equal to
+                                    "--max_cpus" (Default: 1)
+
+            --example_fastqs    Print an example of expected input for FASTQs file.
+
+            --check_fastqs      Verify "--fastqs" produces the expected inputs.
+
+            --keep_cache        Keeps 'work' and '.nextflow' logs, default is to
+                                    delete on successful completion.
+
+        BBDuk Parameters:
+            --adapters FASTA    Illumina adapters to remove (Default: BBmap adapters)
+
+            --adapter_k INT     Kmer length used for finding adapters. Adapters
+                                    shorter than k will not be found. (Default: 23)
+
+            --phix FASTA        phiX174 reference genome to remove (Default: NC_001422)
+
+            --phix_k INT        Kmer length used for finding phiX174. Contaminants
+                                    shorter than k will not be found. (Default: 31)
+
+            --ktrim STR         Trim reads to remove bases matching reference kmers.
+                                    Values:
+                                        f (do not trim)
+                                        r (trim to the right, Default)
+                                        l (trim to the left)
+
+            --mink INT          Look for shorter kmers at read tips down to this
+                                    length, when k-trimming or masking. 0 means
+                                    disabled. Enabling this will disable maskmiddle.
+                                    (Default: 11)
+
+            --hdist INT         Maximum Hamming distance for ref kmers (subs only).
+                                    Memory use is proportional to (3*K)^hdist.
+                                    (Default: 1)
+
+            --tpe BOOL          When kmer right-trimming, trim both reads to the
+                                    minimum length of either.
+                                    Values:
+                                        f (do not equally trim)
+                                        t (equally trim to the right, Default)
+
+            --tbo BOOL          Trim adapters based on where paired reads overlap.
+                                    Values:
+                                        f (do not trim by overlap)
+                                        t (trim by overlap, Default)
+
+            --qtrim STR         Trim read ends to remove bases with quality below
+                                    trimq. Performed AFTER looking for kmers. Values:
+                                        rl (trim both ends, Default)
+                                        f (neither end)
+                                        r (right end only)
+                                        l (left end only)
+                                        w (sliding window)
+
+            --trimq FLOAT       Regions with average quality BELOW this will be
+                                    trimmed if qtrim is set to something other than f.
+                                    (Default: 6)
+
+            --maq INT           Reads with average quality (after trimming) below
+                                    this will be discarded. (Default: 20)
+
+            --minlength INT     Reads shorter than this after trimming will be
+                                    discarded. Pairs will be discarded if both are
+                                    shorter. (Default: 35)
+
+            --ftm INT           If positive, right-trim length to be equal to zero,
+                                    modulo this number. (Default: 0)
+
+            --tossjunk          Discard reads with invalid characters as bases.
+                                    Values:
+                                        f (keep all reads)
+                                        t (toss reads with ambiguous bases, Default)
+
+            --qout STR          Output quality offset.
+                                    Values:
+                                        33 (PHRED33 offset quality scores, Default)
+                                        64 (PHRED64 offset quality scores)
+                                        auto (keeps the current input offset)
+
+            --xmx STR           This will be passed to Java to set memory usage.
+                                    Examples:
+                                        8g will specify 8 gigs of RAM (Default)
+                                        20g will specify 20 gigs of RAM
+                                        200m will specify 200 megs of RAM
+
+        Lighter Parameters:
+            --maxcor INT        Max number of corrections within a 20bp window
+                                    (Default: 1)
+
+        Reformat (BBmap) Parameters:
+            --sampleseed INT    Set to a positive number to use that prng seed for
+                                    sampling (Default 42).
+
+            --version           Print workflow version information
+            --help              Show this message and exit
+    """.stripIndent()
+
+    exit 0
+}
+
+def print_version() {
+    println(PROGRAM_NAME + ' ' + VERSION)
+    exit 0
+}
+
+def print_example_fastqs() {
+    log.info 'Printing example input for "--fastqs"'
+    log.info ''
+    log.info 'sample\tr1\tr2'
+    log.info 'test001\t/path/to/fastqs/test_R1.fastq.gz\t/path/to/fastqs/test_R2.fastq.gz'
+    log.info 'test002\t/path/to/fastqs/test.fastq.gz\t'
+
+    exit 0
+}
+
+def print_check_fastqs(fastq_input) {
+    log.info 'Printing what would have been processed. Each line consists of an array of'
+    log.info 'three elements: [SAMPLE_NAME, IS_SINGLE_END, [FASTQ_1, FASTQ_2]]'
+    log.info ''
+    log.info 'Found:'
+    create_fastq_channel(fastq_input).println()
+
+    exit 0
+}
+
+def is_positive_integer(value, name) {
+    is_positive = true
+    if (value.getClass() == Integer) {
+        if (value < 0) {
+            log.info('Invalid input (--'+ name +'), "' + value + '"" is not a positive integer.')
+            is_positive = false
+        }
+    } else {
+        if (!value.isInteger()) {
+            log.info('Invalid input (--'+ name +'), "' + value + '"" is not numeric.')
+            is_positive = false
+        } else if (value.toInteger() < 0) {
+            log.info('Invalid input (--'+ name +'), "' + value + '"" is not a positive integer.')
+            is_positive = false
+        }
+    }
+    return is_positive
+}
+
+def check_input_params() {
+    error = false
+    missing_requirement = false
+    if (!params.fastqs) {
+        log.info('Missing required "--fastqs" input')
+        error = true
+    } else if (!file(params.fastqs).exists()) {
+        log.info('Invalid input (--fastqs), please verify "' + params.fastqs + '"" exists.')
+        error = true
+    }
+
+    if (!is_positive_integer(params.max_cpus, 'max_cpus')) {
+        error = true
+    }
+
+    if (!is_positive_integer(params.cpus, 'cpus')) {
+        error = true
+    }
+
+    if (!is_positive_integer(params.genome_size, 'genome_size')) {
+        error = true
+    }
+
+    if (params.adapters) {
+        if (!file(params.adapters).exists()) {
+            log.info('Invalid input (--adapters), please verify "' + params.adapters + '"" exists.')
+            error = true
+        }
+    }
+    if (params.phix) {
+        if (!file(params.phix).exists()) {
+            log.info('Invalid input (--phix), please verify "' + params.phix + '"" exists.')
+            error = true
+        }
+    }
+
+    if (error) {
+        log.info('See --help for more information')
+        exit 1
+    }
+}
+
+def process_csv(line) {
+    /* Parse line and determine if single end or paired reads*/
+    if (line.r2) {
+        // Paired
+        return tuple(line.sample, false, [file(line.r1), file(line.r2)])
+    } else {
+        // Single End
+        return tuple(line.sample, true, [file(line.r1)])
+    }
+}
+
+def create_fastq_channel(fastq_input) {
+    return Channel.fromPath( file(fastq_input) )
+            .splitCsv(header: true, sep: '\t')
+            .map { row -> process_csv(row) }
+}
+
+def check_input_fastqs(fastq_input) {
+    /* Read through --fastqs and verify each input exists. */
+    samples = [:]
+    error = false
+    has_valid_header = false
+    line = 1
+    file(fastq_input).splitEachLine('\t') { cols ->
+        if (line == 1) {
+            if (cols[0] == 'sample' && cols[1] == 'r1' && cols[2] == 'r2') {
+                has_valid_header = true
+            }
+        } else {
+            if (samples.containsKey(cols[0])) {
+                samples[cols[0]] = samples[cols[0]] + 1
+            } else {
+                samples[cols[0]] = 1
+            }
+            if (cols[1]) {
+                if (!file(cols[1]).exists()) {
+                    log.info "LINE " + line + ':ERROR: Please verify ' + cols[1]+ ' exists, and try again'
+                    error = true
+                }
+            }
+            if (cols[2]) {
+                if (!file(cols[2]).exists()) {
+                    log.info "LINE " + line + ':ERROR: Please verify ' + cols[2]+ ' exists, and try again'
+                    error = true
+                }
+            }
+        }
+
+        line = line + 1
+    }
+
+    samples.each{ sample, count ->
+        if (count > 1) {
+            error = true
+            log.info 'Sample name "'+ sample +'" is not unique, please revise sample names'
+        }
+    }
+
+    if (!has_valid_header) {
+        error = true
+        log.info 'The header line (line 1) does not follow expected structure.'
+    }
+
+    if (error) {
+        log.info 'Verify sample names are unique and/or FASTQ paths are correct'
+        log.info 'See "--example_fastqs" for an example'
+        log.info 'Exiting'
+        exit 1
+    }
+}
