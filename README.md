@@ -1,3 +1,7 @@
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat-square)](http://bioconda.github.io/recipes/illumina-cleanup/README.html)
+[![Docker Repository on Quay.io](https://quay.io/repository/biocontainers/illumina-cleanup/status "Docker Repository on Quay.io")](https://quay.io/repository/biocontainers/illumina-cleanup)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/illumina-cleanup/badges/downloads.svg)](https://anaconda.org/bioconda/illumina-cleanup)
+
 A Nextflow powered pipeline for pre-processing Illumina sequence reads.
 
 # illumina-cleanup
@@ -5,12 +9,14 @@ A Nextflow powered pipeline for pre-processing Illumina sequence reads.
 
 # Installation
 ### Bioconda
-In the works!
+*illumina-cleanup* is availble on [BioConda](https://bioconda.github.io/recipes/illumina-cleanup/README.html).
+```
+conda install -c bioconda illumina-cleanup
+```
 
 ### From Souce
-The first requirement is to have each of the dependencies (see [*Dependencies*](https://github.com/rpetit3/illumina-cleanup/tree/version-update#dependencies)) installed and available in your PATH.
+The first requirement is to have each of the dependencies (see [*Dependencies*](https://github.com/rpetit3/illumina-cleanup/tree/version-update#dependencies)) installed and available in your PATH. With all dependencies installed:
 
-With all dependencies installed:
 ```
 git clone git@github.com:rpetit3/illumina-cleanup.git
 cd illumina-cleanup
