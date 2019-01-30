@@ -150,7 +150,7 @@ Reformat (BBmap) Parameters:
 ### `--fastqs` a *File of Filenames* for Input FASTQs
 *illumina-cleanup* was developed to take in a file with information about the inputs, a *file of filenames* (FOFN). Essentially what this file does is specify the location of FASTQs to be processed, whether they are single-end (SE) or paired-end (PE) reads, and what to name (sample name) the output files. 
 
-While this is an additional step for you, the user, it avoids potenial bugs associated with pattern matching FASTQs to extract a name and the SE vs PE status. Most importantly, by taking this approach, Nextflow can easily queue the analysis of a single FASTQ or hundreds of FASTQs in a single command. There is also the added benefi of knowing which FASTQs were analysed and their location at a later time.
+While this is an additional step for you, the user, it avoids potenial bugs associated with pattern matching FASTQs to extract a name and the SE vs PE status. Most importantly, by taking this approach, Nextflow can easily queue the analysis of a single FASTQ or hundreds of FASTQs in a single command. There is also the added benefit of knowing which FASTQs were analysed and their location at a later time.
 
 #### Structure of the *FASTQs* FOFN
 You can use the `--example_fastqs` to get an example of the expected structure for the input FASTQs FOFN.
@@ -198,13 +198,13 @@ Found:
 [test001, false, [/home/rpetit/illumina-cleanup/test/fastqs/test_R1.fastq.gz, /home/rpetit/illumina-cleanup/test/fastqs/test_R2.fastq.gz]]
 [test002, true, [/home/rpetit/illumina-cleanup/test/fastqs/test.fastq.gz]]
 ```
-What has happened here is, each sample passed validation and were put into a three element array:
+Each sample has passed validation and is put into a three element array:
 
 1. sample - the name for this sample
-2. single_end - whether the reads are single-end (true) or paired-end (false)
+2. is_single_end - the reads are single-end (true) or paired-end (false)
 3. fastq_array - the fastqs associated with the sample
 
-This array is then automatically queued up for poreccessing by Nextflow.
+This array is then automatically queued up for proccessing by Nextflow.
 
 ##### FOFN with errors
 ```
@@ -221,11 +221,11 @@ See "--example_fastqs" for an example
 Exiting
 ```
 
-In the above example, there are mulitple errors. Lines 4 and 5 (`LINE 4:ERROR` or `LINE 5:ERROR`) suggest that based on the given paths the FASTQs did not exist. The sample name `test002` has been used multiple times, and must be corrected. There is also and issue with the header line not following the expected structure.
+In the above example, there are mulitple errors. Lines 4 and 5 (`LINE 4:ERROR` or `LINE 5:ERROR`) suggest that based on the given paths the FASTQs do not exist. The sample name `test002` has been used multiple times, and must be corrected. There is also an issue with the header line that must be looked into.
 
 
 ### `--max_cpus` vs `--cpus`
-By default when Nextflow executes, it uses all available cpus are used to queue up processes. As you might imagine, if your on a single server with multiple users, this approach (use all cpus) might annoy other users. To circumvent this feature, two parmeters have been included `--max_cpus` and `--cpus`.
+By default when Nextflow executes, it uses all available cpus are used to queue up processes. As you might imagine, if you are on a single server with multiple users, this approach (use all cpus) might annoy other users. To circumvent this feature, two parmeters have been included `--max_cpus` and `--cpus`.
 
 
 ```
@@ -238,20 +238,20 @@ By default when Nextflow executes, it uses all available cpus are used to queue 
                             "--max_cpus" (Default: 1)
  ```
  
-What `--max_cpus` does is specify to Nextflow the maximum number of cpus it is allowed to occupy at any given time. `--cpus` on the other hand, specifies how many cpus any given step (adapter trimming, qc, etc...) can use at once. By default `--max_cpus` is set to one  and if `--cpus` is set to a value greater than `--max_cpus` it will be set equal to `--max_cpus`. This appoach errs on the side of caution (e.g. not taking up the whole server!) and lets Nextflow figure out how best to queue up tasks.
+What `--max_cpus` does is specify to Nextflow the maximum number of cpus it is allowed to occupy at any given time. `--cpus` on the other hand, specifies how many cpus any given step (adapter trimming, qc, etc...) can occupy. By default **`--max_cpus` is set to 1** and if `--cpus` is set to a value greater than `--max_cpus` it will be set equal to `--max_cpus`. This appoach errs on the side of caution (e.g. not taking up the whole server!) and lets Nextflow figure out how best to queue up tasks.
 
 ### `--genome_size` for Error Correction and Coverage Reduction
-Base error corrections are handled by *Lighter*. Lighter requires an expected genome size to be given at runtime. There for if a genome size is not given by the user, the error correction step will be skipped.
+Base error corrections are handled by *Lighter*. Lighter requires an expected genome size to be given at runtime. If a genome size is not given by the user, the error correction step will be skipped.
 
-Also, as you might expect, a genome size is required to randomly (*reformat.sh* from BBTools) subsample sequences to a given coverage. Again this step will be skipped if a genome size is not given. 
+Also, a genome size is required to randomly (*reformat.sh* from BBTools) subsample sequences to a given coverage. Again this step will be skipped if a genome size is not given. 
 
 ### `--keep_cache` for Intermediate Files
-By default, *illumina-cleanup* will remove all intermediate files **after successfully completing**. It does this by removing the `work` and `.nextflow` directories created by Nextflow. Again, this only occurs after all samples have been successfully processed. If there is an error during execution, the cache will remain intact and the process can still be resumed (`-resume`). 
+By default, *illumina-cleanup* will remove all intermediate files **after successfully completing all steps**. It does this by removing the `work` and `.nextflow` directories created by Nextflow. Again, this only occurs after all samples have been successfully processed. If there is an error during execution, the cache will remain intact and the process can still be resumed (`-resume`). 
 
-If you would like to retain the cache files, you can use the `--keep_cache` parameters to do so. Please keep in mind there is storage overhead in doing so. The cache will uncontain uncompressed FASTQ files for each step of the process.
+If you would like to retain the cache files, you can use the `--keep_cache` parameters to do so. Please keep in mind there is storage overhead in doing so. The cache will contain multiple uncompressed FASTQ files for each sample that was processed.
 
 ### Remaining Parameters
-The remaining parameters are mostly associated with specific programs. These parameters are grouped by program in the usage. All available parameters availble from a given program may not be available in *illumina-cleanup* (Example: BBDUk's extensive set of parameters). For suggested use cases, these parameters may be made available in the future.
+The remaining parameters are mostly associated with specific programs. These parameters are grouped by program in the usage. All available parameters from a given program may not be available in *illumina-cleanup* (Example: BBDUk's extensive set of parameters). For suggested use cases, these parameters may be made available in the future.
 
 # Dependencies
 In order to use *illumina-cleanup* you will need to have the following programs installed. The program versions that were tested are given in parentheses.
@@ -265,12 +265,12 @@ Used *BBDuk* and *Reformat* for removing adapters, PhiX contaminants, quality (P
 _[BBTools Home Page](https://jgi.doe.gov/data-and-tools/bbtools/)_
 
 * __FastQC (v0.11.8)__  
-Used to generate visuals of sequencing quality and as input for [MultiQC](https://multiqc.info/)  
+Used to generate visuals of sequence quality and as input for [MultiQC](https://multiqc.info/)  
 _Andrews, S. FastQC: a quality control tool for high throughput sequence data.
 (http://www.bioinformatics.babraham.ac.uk/projects/fastqc)._
 
 * __fastq-scan (v0.3)__  
-Used to get a quick summary of sequencing quality in JSON format.  
+Used to get a quick summary of sequence quality in JSON format.  
 _[fastq-scan Home Page](https://github.com/rpetit3/fastq-scan)_
 
 * __Lighter (v1.1.2)__  
