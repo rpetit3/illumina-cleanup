@@ -314,25 +314,27 @@ def print_usage() {
             --fastqs STR        An input file containing the sample name and absolute
                                     paths to FASTQs to process.
 
-            --example_fastqs    Print an example of expected input for FASTQs file.
 
-            --check_fastqs      Verify "--fastqs" produces the expected inputs.
-
-             -name              Name for the pipeline run. If not specified, Nextflow
-                                    will automatically generate a random mnemonic.
         Optional Parameters:
-            --max_cpus INT       The maximum number of processors this workflow should
-                                     have access to at any given moment. (Default: 1)
-
             --coverage INT      Reduce samples to a given coverage. (Default: 100)
 
             --genome_size INT   Expected genome size (bp) for all samples. (Default: 0).
 
             --outdir DIR        Directory to write results to. (Default ./)
 
+            --max_cpus INT       The maximum number of processors this workflow should
+                                     have access to at any given moment. (Default: 1)
+
             --cpus INT          Number of processors made available to a single process.
                                     If greater than "--max_cpus" it will be set equal to
                                     "--max_cpus" (Default: 1)
+
+            --example_fastqs    Print an example of expected input for FASTQs file.
+
+            --check_fastqs      Verify "--fastqs" produces the expected inputs.
+
+            --keep_cache        Keeps 'work' and '.nextflow' logs, default is to
+                                    delete on successful completion.
 
         BBDuk Parameters:
             --adapters FASTA    Illumina adapters to remove (Default: BBmap adapters)
@@ -418,8 +420,6 @@ def print_usage() {
             --sampleseed INT    Set to a positive number to use that prng seed for
                                     sampling (Default 42).
 
-            --keep_cache        Keeps 'work' and '.nextflow' logs, default is to
-                                    delete on successful completion.
             --version           Print workflow version information
             --help              Show this message and exit
     """.stripIndent()
@@ -534,9 +534,14 @@ def check_input_fastqs(fastq_input) {
     /* Read through --fastqs and verify each input exists. */
     samples = [:]
     error = false
+    has_valid_header = false
     line = 1
     file(fastq_input).splitEachLine('\t') { cols ->
-        if (cols[0] != 'sample') {
+        if (line == 1) {
+            if (cols[0] == 'sample' && cols[1] == 'r1' && cols[2] == 'r2') {
+                has_valid_header = true
+            }
+        } else {
             if (samples.containsKey(cols[0])) {
                 samples[cols[0]] = samples[cols[0]] + 1
             } else {
@@ -544,17 +549,18 @@ def check_input_fastqs(fastq_input) {
             }
             if (cols[1]) {
                 if (!file(cols[1]).exists()) {
-                    log.info line + ':ERROR: Please verify ' + cols[1]+ ' exists, and try again'
+                    log.info "LINE " + line + ':ERROR: Please verify ' + cols[1]+ ' exists, and try again'
                     error = true
                 }
             }
             if (cols[2]) {
                 if (!file(cols[2]).exists()) {
-                    log.info line + ':ERROR: Please verify ' + cols[2]+ ' exists, and try again'
+                    log.info "LINE " + line + ':ERROR: Please verify ' + cols[2]+ ' exists, and try again'
                     error = true
                 }
             }
         }
+
         line = line + 1
     }
 
@@ -563,6 +569,11 @@ def check_input_fastqs(fastq_input) {
             error = true
             log.info 'Sample name "'+ sample +'" is not unique, please revise sample names'
         }
+    }
+
+    if (!has_valid_header) {
+        error = true
+        log.info 'The header line (line 1) does not follow expected structure.'
     }
 
     if (error) {
