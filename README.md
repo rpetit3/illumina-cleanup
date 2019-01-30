@@ -1,4 +1,4 @@
-A Nextflow powered pipeline for cleaning up Illumina sequence reads.
+A Nextflow powered pipeline for pre-processing Illumina sequence reads.
 
 # illumina-cleanup
 *illumina-cleanup* is a simple Nextflow pipeline to remove Illumina adapters, PhiX contaminants, quality filter, base-error correction, and reduced sequence coverage Illumina samples. This is accomplished by making use of [FastQC](http://www.bioinformatics.babraham.ac.uk/projects/fastqc/), [BBTools](https://jgi.doe.gov/data-and-tools/bbtools/) (BBDuk, Reformat), [Lighter](https://github.com/mourisl/Lighter) and [fastq-scan](https://github.com/rpetit3/fastq-scan). 
