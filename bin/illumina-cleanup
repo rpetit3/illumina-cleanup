@@ -282,10 +282,7 @@ process finish_up {
 /* ==== END FASTQ CLEANUP ==== */
 workflow.onComplete {
     if (workflow.success == true && params.keep_cache == false) {
-        // No need to resume completed run so remove cache.
-        file('./work/').deleteDir()
-        file('./.nextflow/').deleteDir()
-        file('.nextflow.log').delete()
+        clean_cache()
     }
     println """
     Pipeline execution summary
@@ -423,12 +420,13 @@ def print_usage() {
             --version           Print workflow version information
             --help              Show this message and exit
     """.stripIndent()
-
+    clean_cache()
     exit 0
 }
 
 def print_version() {
     println(PROGRAM_NAME + ' ' + VERSION)
+    clean_cache()
     exit 0
 }
 
@@ -438,7 +436,7 @@ def print_example_fastqs() {
     log.info 'sample\tr1\tr2'
     log.info 'test001\t/path/to/fastqs/test_R1.fastq.gz\t/path/to/fastqs/test_R2.fastq.gz'
     log.info 'test002\t/path/to/fastqs/test.fastq.gz\t'
-
+    clean_cache()
     exit 0
 }
 
@@ -448,8 +446,15 @@ def print_check_fastqs(fastq_input) {
     log.info ''
     log.info 'Found:'
     create_fastq_channel(fastq_input).println()
-
+    clean_cache()
     exit 0
+}
+
+def clean_cache() {
+    // No need to resume completed run so remove cache.
+    file('./work/').deleteDir()
+    file('./.nextflow/').deleteDir()
+    file('.nextflow.log').delete()
 }
 
 def is_positive_integer(value, name) {
