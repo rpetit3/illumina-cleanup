@@ -260,7 +260,7 @@ In order to use *illumina-cleanup* you will need to have the following programs 
 Used to manage the workflow.  
 _Di Tommaso, P., Chatzou, M., Floden, E.W., Barja, P.P., Palumbo, E., Notredame, C., 2017. [Nextflow enables reproducible computational workflows.](https://www.nature.com/articles/nbt.3820.pdf?origin=ppub) Nat. Biotechnol. 35, 316–319._
 
-* __BBTools (v38.34)__  
+* __BBTools (v38.22)__  
 Used *BBDuk* and *Reformat* for removing adapters, PhiX contaminants, quality (PHRED-based) filtering, and randomly subsampling.  
 _[BBTools Home Page](https://jgi.doe.gov/data-and-tools/bbtools/)_
 
