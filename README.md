@@ -1,6 +1,6 @@
 [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat-square)](http://bioconda.github.io/recipes/illumina-cleanup/README.html)
-[![Docker Repository on Quay.io](https://quay.io/repository/biocontainers/illumina-cleanup/status "Docker Repository on Quay.io")](https://quay.io/repository/biocontainers/illumina-cleanup)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/illumina-cleanup/badges/downloads.svg)](https://anaconda.org/bioconda/illumina-cleanup)
+<!-- [![Docker Repository on Quay.io](https://quay.io/repository/biocontainers/illumina-cleanup/status "Docker Repository on Quay.io")](https://quay.io/repository/biocontainers/illumina-cleanup) -->
 
 A Nextflow powered pipeline for pre-processing Illumina sequence reads.
 
